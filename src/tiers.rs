@@ -4,6 +4,7 @@ use std::collections::HashMap;
 #[derive(Deserialize)]
 pub struct Dataset {
     pub patch: String,
+    pub stats_date: Option<String>,
     augments: Vec<Augment>,
     #[serde(default)]
     combo_hints: HashMap<String, HashMap<String, String>>,

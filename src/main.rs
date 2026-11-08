@@ -26,14 +26,17 @@ use windows::{
 
 const SCAN: i32 = 1;
 const QUIT: i32 = 2;
+const DETAILS: i32 = 3;
 const BADGE_HEIGHT: i32 = 34;
 const HINT_HEIGHT: i32 = 24;
 const HINT_TOP: i32 = BADGE_HEIGHT + 3;
+const HEADER_HEIGHT: i32 = HINT_HEIGHT + 3;
 const BADGE_CENTER_Y_PERCENT: i32 = 71;
 const COLOR_KEY: COLORREF = COLORREF(0x00ff00ff);
 
 thread_local! {
     static BADGES: RefCell<[Badge; 3]> = RefCell::default();
+    static HEADER: RefCell<Option<Vec<u16>>> = const { RefCell::new(None) };
 }
 
 #[derive(Default)]
@@ -66,6 +69,7 @@ fn main() -> Result<()> {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)?;
         let overlay = create_overlay()?;
         RegisterHotKey(None, SCAN, MOD_NOREPEAT, VK_F8.0 as u32)?;
+        RegisterHotKey(None, DETAILS, MOD_NOREPEAT | MOD_SHIFT, VK_F8.0 as u32)?;
         RegisterHotKey(
             None,
             QUIT,
@@ -73,7 +77,7 @@ fn main() -> Result<()> {
             VK_F8.0 as u32,
         )?;
         println!(
-            "Minimal Mayhem Overlay | patch {} | F8 scan | Ctrl+Shift+F8 quit",
+            "Minimal Mayhem Overlay | patch {} | F8 scan | Shift+F8 details | Ctrl+Shift+F8 quit",
             data.patch
         );
 
@@ -87,7 +91,7 @@ fn main() -> Result<()> {
             }
             match message.message {
                 WM_HOTKEY if message.wParam.0 == QUIT as usize => return Ok(()),
-                WM_HOTKEY if message.wParam.0 == SCAN as usize => {
+                WM_HOTKEY if matches!(message.wParam.0 as i32, SCAN | DETAILS) => {
                     hide(overlay, &mut displayed);
                     let Ok(game) =
                         FindWindowW(w!("RiotWindowClass"), w!("League of Legends (TM) Client"))
@@ -103,24 +107,42 @@ fn main() -> Result<()> {
                             let width = area.right - area.left;
                             let height = area.bottom - area.top;
                             let centers = scan::card_centers(width, height);
+                            let details = message.wParam.0 == DETAILS as usize;
+                            HEADER.replace(details.then(|| {
+                                let mut label = format!("Patch {}", data.patch);
+                                if let Some(date) = &data.stats_date {
+                                    label.push_str("  ·  Stats ");
+                                    label.push_str(date);
+                                }
+                                label.encode_utf16().collect()
+                            }));
                             BADGES.replace(std::array::from_fn(|i| Badge {
                                 center: centers[i],
                                 stats: cards[i],
-                                hint: champion
-                                    .as_deref()
-                                    .zip(cards[i])
-                                    .and_then(|(name, card)| data.combo_hint(name, card))
-                                    .map(|partner| {
-                                        format!("Combo with {partner}").encode_utf16().collect()
-                                    }),
+                                hint: cards[i]
+                                    .and_then(|card| {
+                                        if details {
+                                            card.rank_change.map(|change| {
+                                                format!("Global rank move {change:+}")
+                                            })
+                                        } else {
+                                            champion
+                                                .as_deref()
+                                                .and_then(|name| data.combo_hint(name, card))
+                                                .map(|partner| format!("Combo with {partner}"))
+                                        }
+                                    })
+                                    .map(|label| label.encode_utf16().collect()),
                             }));
                             SetWindowPos(
                                 overlay,
                                 Some(HWND_TOPMOST),
                                 area.left,
-                                area.top + height * BADGE_CENTER_Y_PERCENT / 100 - BADGE_HEIGHT / 2,
+                                area.top + height * BADGE_CENTER_Y_PERCENT / 100
+                                    - BADGE_HEIGHT / 2
+                                    - HEADER_HEIGHT,
                                 width,
-                                HINT_TOP + HINT_HEIGHT,
+                                HEADER_HEIGHT + HINT_TOP + HINT_HEIGHT,
                                 SWP_NOACTIVATE | SWP_SHOWWINDOW,
                             )?;
                             let _ = InvalidateRect(Some(overlay), None, false);
@@ -234,6 +256,11 @@ unsafe extern "system" fn window_proc(
         let previous = SelectObject(dc, font.into());
         BADGES.with_borrow_mut(|badges| {
             let half_width = ((badges[1].center - badges[0].center - 8) / 2).clamp(1, 161);
+            HEADER.with_borrow_mut(|header| {
+                if let Some(label) = header {
+                    draw_chip(dc, label, badges[1].center, half_width, 0);
+                }
+            });
             for badge in badges {
                 let Badge {
                     center,
@@ -256,8 +283,8 @@ unsafe extern "system" fn window_proc(
                 let mut rect = RECT {
                     left: center - half_width,
                     right: center + half_width,
-                    top: 0,
-                    bottom: BADGE_HEIGHT,
+                    top: HEADER_HEIGHT,
+                    bottom: HEADER_HEIGHT + BADGE_HEIGHT,
                 };
                 let accent = COLORREF(match grade {
                     'S' => 0x007fe3ff,
@@ -292,22 +319,7 @@ unsafe extern "system" fn window_proc(
                     );
                 }
                 if let Some(hint) = hint {
-                    let mut rect = RECT {
-                        left: center - half_width,
-                        right: center + half_width,
-                        top: HINT_TOP,
-                        bottom: HINT_TOP + HINT_HEIGHT,
-                    };
-                    rounded_plate(dc, &rect, COLORREF(0x00645748));
-                    rect.left += 7;
-                    rect.right -= 7;
-                    SetTextColor(dc, COLORREF(0x00f5f2ed));
-                    DrawTextW(
-                        dc,
-                        hint,
-                        &mut rect,
-                        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX,
-                    );
+                    draw_chip(dc, hint, center, half_width, HEADER_HEIGHT + HINT_TOP);
                 }
             }
         });
@@ -315,6 +327,27 @@ unsafe extern "system" fn window_proc(
         let _ = DeleteObject(font.into());
         let _ = EndPaint(hwnd, &paint);
         LRESULT(0)
+    }
+}
+
+unsafe fn draw_chip(dc: HDC, label: &mut [u16], center: i32, half_width: i32, top: i32) {
+    unsafe {
+        let mut rect = RECT {
+            left: center - half_width,
+            right: center + half_width,
+            top,
+            bottom: top + HINT_HEIGHT,
+        };
+        rounded_plate(dc, &rect, COLORREF(0x00645748));
+        rect.left += 7;
+        rect.right -= 7;
+        SetTextColor(dc, COLORREF(0x00f5f2ed));
+        DrawTextW(
+            dc,
+            label,
+            &mut rect,
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX,
+        );
     }
 }
 

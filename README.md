@@ -18,6 +18,8 @@ seconds or when League loses focus. Press F8 again after a reroll.
 Launch with `minimal-mayhem-overlay.exe --champion Lucian` to show curated
 combo hints for Lucian. Use the Riot champion key (for example, `MasterYi`).
 Hints come from the provider's editorial combo catalog.
+Press **Shift+F8** for the data patch, stats date, and movement in the
+provider's global pick-rate ranking since its previous snapshot.
 
 The prototype assumes the default offer layout. It uses Windows' built-in en-US
 OCR. Run `minimal-mayhem-overlay.exe --check-ocr` to check that the OCR language is
