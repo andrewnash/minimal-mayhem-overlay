@@ -19,13 +19,28 @@ messages while idle and makes no network requests.
 
 ## How tiers are calculated
 
-The bundled patch 26.22 snapshot groups augments by rarity and splits each
+The bundled [patch snapshot](data/augments.json) groups augments by rarity and splits each
 group into five bands by overall pick-rate rank. These badges measure pick
 popularity across champions. They use a separate grading formula from OP.GG.
 
 [Data: arammayhem.com](https://arammayhem.com/data/) ([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)).
 The bundled snapshot retains the English name, rarity, and pick rate from each
-active augment row.
+active augment row with a published pick rate.
+
+## Refresh patch data
+
+Once arammayhem.com publishes the new patch export, run these commands from the
+repository root using PowerShell 7 and Rust:
+
+```powershell
+pwsh -NoProfile -File scripts/update-augments.ps1
+cargo build --release --locked
+```
+
+Pass `-Patch 26.22` to select a specific patch and confirm the reported patch
+and stats date before sharing the rebuilt executable. The script replaces the
+bundled snapshot only after validating the export. The app embeds the snapshot
+at build time and grades it offline.
 
 Initial title band and card spacing informed by [Hexsight's OCR implementation](https://github.com/bard58/hexsight/blob/v0.1.2/src/ocr.rs).
 

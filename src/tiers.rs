@@ -75,8 +75,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn real_data_handles_ocr_errors_and_unknown_titles() {
-        let data: Dataset = serde_json::from_str(include_str!("../data/augments.json")).unwrap();
+    fn handles_ocr_errors_and_unknown_titles() {
+        let data: Dataset = serde_json::from_str(
+            r#"{"patch":"test","augments":[
+                {"name":"Transmute: Prismatic","rarity":"gold","pick_rate":10},
+                {"name":"Transmute: Gold","rarity":"silver","pick_rate":20}
+            ]}"#,
+        )
+        .unwrap();
         let tiers = data.tiers();
         let exact = tiers.recognize("Transmute: Prismatic").unwrap();
         assert_eq!(exact.1, 'S');
