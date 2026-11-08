@@ -210,17 +210,12 @@ unsafe extern "system" fn window_proc(
         );
         let previous = SelectObject(dc, font.into());
         let badges = BADGES.get();
-        let half_width = ((badges[1].0 - badges[0].0 - 8) / 2).clamp(1, 120);
+        let half_width = ((badges[1].0 - badges[0].0 - 8) / 2).clamp(1, 161);
         for (center, stats) in badges {
             let (grade, mut label) = match stats {
                 Some(stats) => (
                     stats.tier,
-                    format!(
-                        "{:.2}% pick  ·  #{}/{}",
-                        stats.pick_rate, stats.rarity_rank, stats.rarity_count
-                    )
-                    .encode_utf16()
-                    .collect::<Vec<_>>(),
+                    badge_label(stats).encode_utf16().collect::<Vec<_>>(),
                 ),
                 None => ('?', Vec::new()),
             };
@@ -273,6 +268,21 @@ unsafe extern "system" fn window_proc(
         let _ = EndPaint(hwnd, &paint);
         LRESULT(0)
     }
+}
+
+fn badge_label(stats: tiers::CardStats) -> String {
+    use std::fmt::Write;
+
+    let mut label = format!(
+        "{:.2}% pick  ·  #{}/{}",
+        stats.pick_rate, stats.rarity_rank, stats.rarity_count
+    );
+    if stats.new_in_data {
+        label.push_str("  ·  New in data");
+    } else if let Some(change) = stats.pick_change {
+        let _ = write!(label, "  ·  {change:+.2} pp");
+    }
+    label
 }
 
 unsafe fn rounded_plate(dc: HDC, rect: &RECT, accent: COLORREF) {

@@ -11,6 +11,10 @@ struct Augment {
     name: String,
     rarity: String,
     pick_rate: f64,
+    pick_change: Option<f64>,
+    rank_change: Option<i32>,
+    #[serde(default)]
+    new_in_data: bool,
 }
 
 pub struct Tiers {
@@ -23,6 +27,9 @@ pub struct CardStats {
     pub pick_rate: f64,
     pub rarity_rank: usize,
     pub rarity_count: usize,
+    pub pick_change: Option<f64>,
+    pub rank_change: Option<i32>,
+    pub new_in_data: bool,
 }
 
 fn normalize(text: &str) -> String {
@@ -52,6 +59,9 @@ impl Dataset {
                     pick_rate: augment.pick_rate,
                     rarity_rank: rank + 1,
                     rarity_count: count,
+                    pick_change: augment.pick_change,
+                    rank_change: augment.rank_change,
+                    new_in_data: augment.new_in_data,
                 };
                 (normalize(&augment.name), stats)
             })
@@ -107,6 +117,9 @@ mod tests {
                 pick_rate: 10.0,
                 rarity_rank: 2,
                 rarity_count: 2,
+                pick_change: None,
+                rank_change: None,
+                new_in_data: false,
             }
         );
         assert_eq!(tiers.recognize("Transmute Prismatlc").unwrap().0, exact);

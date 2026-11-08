@@ -31,7 +31,11 @@ $augments = @(
              $row.pickRate -isnot [int]) -or $row.pickRate -lt 0 -or $row.pickRate -gt 100) {
             throw "Invalid augment row in $url ($($row.augmentId))"
         }
-        [ordered]@{ name = $row.name.en; rarity = $row.rarity; pick_rate = $row.pickRate }
+        [ordered]@{
+            name = $row.name.en; rarity = $row.rarity; pick_rate = $row.pickRate
+            pick_change = $row.pickRateChange; rank_change = $row.pickRateRankChange
+            new_in_data = $row.presence -ceq 'new'
+        }
     }
 )
 

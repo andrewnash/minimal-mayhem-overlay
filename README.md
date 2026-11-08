@@ -2,7 +2,8 @@
 
 A native Rust overlay for ARAM Mayhem on Windows. Press **F8** while an augment
 offer is visible to read its three title regions once and display each card's
-**S–D tier**, **overall pick rate**, and **pick-rate rank within its rarity**.
+**S–D tier**, **overall pick rate**, **pick-rate rank within its rarity**, and
+the change since the previous published patch in percentage points (pp).
 Press **Ctrl+Shift+F8** to quit. The rounded badges sit near the bottom of each
 card, above the reroll controls. They are click-through and hide after six
 seconds or when League loses focus. Press F8 again after a reroll.
