@@ -15,6 +15,10 @@ seconds or when League loses focus. Press F8 again after a reroll.
 3. Open an ARAM Mayhem augment offer and press F8. A **?** means a card title
    could not be matched confidently.
 
+Launch with `minimal-mayhem-overlay.exe --champion Lucian` to show curated
+combo hints for Lucian. Use the Riot champion key (for example, `MasterYi`).
+Hints come from the provider's editorial combo catalog.
+
 The prototype assumes the default offer layout. It uses Windows' built-in en-US
 OCR. Run `minimal-mayhem-overlay.exe --check-ocr` to check that the OCR language is
 available. Screen crops are processed in memory. The app waits for Windows

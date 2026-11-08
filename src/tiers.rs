@@ -1,13 +1,18 @@
 use serde::Deserialize;
+use std::collections::HashMap;
 
 #[derive(Deserialize)]
 pub struct Dataset {
     pub patch: String,
     augments: Vec<Augment>,
+    #[serde(default)]
+    combo_hints: HashMap<String, HashMap<String, String>>,
 }
 
 #[derive(Deserialize)]
 struct Augment {
+    #[serde(default)]
+    id: String,
     name: String,
     rarity: String,
     pick_rate: f64,
@@ -30,6 +35,7 @@ pub struct CardStats {
     pub pick_change: Option<f64>,
     pub rank_change: Option<i32>,
     pub new_in_data: bool,
+    pub augment_index: usize,
 }
 
 fn normalize(text: &str) -> String {
@@ -40,11 +46,17 @@ fn normalize(text: &str) -> String {
 }
 
 impl Dataset {
+    pub fn combo_hint(&self, champion: &str, card: CardStats) -> Option<&str> {
+        let id = &self.augments.get(card.augment_index)?.id;
+        self.combo_hints.get(champion)?.get(id).map(String::as_str)
+    }
+
     pub fn tiers(&self) -> Tiers {
         let entries = self
             .augments
             .iter()
-            .map(|augment| {
+            .enumerate()
+            .map(|(augment_index, augment)| {
                 let peers = self
                     .augments
                     .iter()
@@ -62,6 +74,7 @@ impl Dataset {
                     pick_change: augment.pick_change,
                     rank_change: augment.rank_change,
                     new_in_data: augment.new_in_data,
+                    augment_index,
                 };
                 (normalize(&augment.name), stats)
             })
@@ -120,6 +133,7 @@ mod tests {
                 pick_change: None,
                 rank_change: None,
                 new_in_data: false,
+                augment_index: 0,
             }
         );
         assert_eq!(tiers.recognize("Transmute Prismatlc").unwrap().0, exact);

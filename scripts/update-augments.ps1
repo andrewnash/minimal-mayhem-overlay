@@ -32,6 +32,7 @@ $augments = @(
             throw "Invalid augment row in $url ($($row.augmentId))"
         }
         [ordered]@{
+            id = $row.augmentId
             name = $row.name.en; rarity = $row.rarity; pick_rate = $row.pickRate
             pick_change = $row.pickRateChange; rank_change = $row.pickRateRankChange
             new_in_data = $row.presence -ceq 'new'
@@ -44,14 +45,40 @@ if (@($augments.rarity | Sort-Object -Unique).Count -ne 3) {
 }
 if ($unrated) { Write-Warning "Skipped $unrated active augment(s) with no pick rate." }
 
+$combos = Invoke-RestMethod -Uri 'https://arammayhem.com/data/v1/latest/combos.json' -TimeoutSec 30
+if ($combos.schemaVersion -ne 1 -or -not $combos.rows) { throw 'Unexpected combo export' }
+$active = @{}
+foreach ($augment in $augments) { $active[$augment.id] = $augment.name }
+$comboHints = [ordered]@{}
+foreach ($combo in ($combos.rows | Sort-Object -Property comboId)) {
+    if (-not $combo.championId -or $combo.types -contains 'trap' -or
+        $combo.types -contains 'entertainment' -or $combo.augmentIds.Count -lt 2 -or
+        @($combo.augmentIds | Where-Object { -not $active.ContainsKey($_) }).Count) { continue }
+    $champion = $combo.championId.ToLowerInvariant()
+    if (-not $comboHints.Contains($champion)) { $comboHints[$champion] = [ordered]@{} }
+    $hints = $comboHints[$champion]
+    foreach ($id in $combo.augmentIds) {
+        if (-not $hints.Contains($id)) {
+            $partner = $combo.augmentIds | Where-Object { $_ -ne $id } | Select-Object -First 1
+            if ($partner) { $hints[$id] = $active[$partner] }
+        }
+    }
+}
+
 $rows = $augments | ForEach-Object { '    ' + (ConvertTo-Json -InputObject $_ -Compress) }
+$hintRows = foreach ($champion in ($comboHints.Keys | Sort-Object)) {
+    '    "' + $champion + '": ' + (ConvertTo-Json -InputObject $comboHints[$champion] -Compress)
+}
 $json = @"
 {
   "patch": "$sourcePatch",
   "stats_date": "$statsDate",
   "augments": [
 $($rows -join ",`n")
-  ]
+  ],
+  "combo_hints": {
+$($hintRows -join ",`n")
+  }
 }
 "@
 $path = Join-Path $PSScriptRoot '../data/augments.json'
@@ -63,4 +90,4 @@ try {
     if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp }
 }
 
-Write-Output "Patch $sourcePatch ($statsDate): wrote $($augments.Count) augments to data/augments.json"
+Write-Output "Patch $sourcePatch ($statsDate): wrote $($augments.Count) augments and combo hints for $($comboHints.Count) champions"

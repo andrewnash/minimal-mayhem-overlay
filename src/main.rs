@@ -2,7 +2,7 @@ mod scan;
 mod tiers;
 
 use std::{
-    cell::Cell,
+    cell::RefCell,
     time::{Duration, Instant},
 };
 use windows::{
@@ -27,11 +27,20 @@ use windows::{
 const SCAN: i32 = 1;
 const QUIT: i32 = 2;
 const BADGE_HEIGHT: i32 = 34;
+const HINT_HEIGHT: i32 = 24;
+const HINT_TOP: i32 = BADGE_HEIGHT + 3;
 const BADGE_CENTER_Y_PERCENT: i32 = 71;
 const COLOR_KEY: COLORREF = COLORREF(0x00ff00ff);
 
 thread_local! {
-    static BADGES: Cell<[(i32, Option<tiers::CardStats>); 3]> = const { Cell::new([(0, None); 3]) };
+    static BADGES: RefCell<[Badge; 3]> = RefCell::default();
+}
+
+#[derive(Default)]
+struct Badge {
+    center: i32,
+    stats: Option<tiers::CardStats>,
+    hint: Option<Vec<u16>>,
 }
 
 fn main() -> Result<()> {
@@ -49,6 +58,10 @@ fn main() -> Result<()> {
     let data: tiers::Dataset =
         serde_json::from_str(include_str!("../data/augments.json")).expect("bundled tier dataset");
     let tiers = data.tiers();
+    let champion = std::env::args()
+        .skip_while(|arg| arg != "--champion")
+        .nth(1)
+        .map(|name| name.to_ascii_lowercase());
     unsafe {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)?;
         let overlay = create_overlay()?;
@@ -90,14 +103,24 @@ fn main() -> Result<()> {
                             let width = area.right - area.left;
                             let height = area.bottom - area.top;
                             let centers = scan::card_centers(width, height);
-                            BADGES.set(std::array::from_fn(|i| (centers[i], cards[i])));
+                            BADGES.replace(std::array::from_fn(|i| Badge {
+                                center: centers[i],
+                                stats: cards[i],
+                                hint: champion
+                                    .as_deref()
+                                    .zip(cards[i])
+                                    .and_then(|(name, card)| data.combo_hint(name, card))
+                                    .map(|partner| {
+                                        format!("Combo with {partner}").encode_utf16().collect()
+                                    }),
+                            }));
                             SetWindowPos(
                                 overlay,
                                 Some(HWND_TOPMOST),
                                 area.left,
                                 area.top + height * BADGE_CENTER_Y_PERCENT / 100 - BADGE_HEIGHT / 2,
                                 width,
-                                BADGE_HEIGHT,
+                                HINT_TOP + HINT_HEIGHT,
                                 SWP_NOACTIVATE | SWP_SHOWWINDOW,
                             )?;
                             let _ = InvalidateRect(Some(overlay), None, false);
@@ -209,60 +232,85 @@ unsafe extern "system" fn window_proc(
             w!("Segoe UI"),
         );
         let previous = SelectObject(dc, font.into());
-        let badges = BADGES.get();
-        let half_width = ((badges[1].0 - badges[0].0 - 8) / 2).clamp(1, 161);
-        for (center, stats) in badges {
-            let (grade, mut label) = match stats {
-                Some(stats) => (
-                    stats.tier,
-                    badge_label(stats).encode_utf16().collect::<Vec<_>>(),
-                ),
-                None => ('?', Vec::new()),
-            };
-            let half_width = if stats.is_some() {
-                half_width
-            } else {
-                half_width.min(21)
-            };
-            let mut rect = RECT {
-                left: center - half_width,
-                right: center + half_width,
-                top: 0,
-                bottom: BADGE_HEIGHT,
-            };
-            let accent = COLORREF(match grade {
-                'S' => 0x007fe3ff,
-                'A' => 0x00f1b8d9,
-                'B' => 0x00ffcea1,
-                'C' => 0x00d0d0a3,
-                _ => 0x00c0b7b0,
-            });
-            rounded_plate(dc, &rect, accent);
-            let mut tier_rect = rect;
-            if stats.is_some() && half_width >= 40 {
-                tier_rect.right = rect.left + 42;
-                rect.left = tier_rect.right;
-                rect.right -= 9;
-            } else {
-                label.clear();
-            }
-            SetTextColor(dc, accent);
-            DrawTextW(
-                dc,
-                &mut [grade as u16],
-                &mut tier_rect,
-                DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
-            );
-            if !label.is_empty() {
-                SetTextColor(dc, COLORREF(0x00f5f2ed));
+        BADGES.with_borrow_mut(|badges| {
+            let half_width = ((badges[1].center - badges[0].center - 8) / 2).clamp(1, 161);
+            for badge in badges {
+                let Badge {
+                    center,
+                    stats,
+                    hint,
+                } = badge;
+                let (center, stats) = (*center, *stats);
+                let (grade, mut label) = match stats {
+                    Some(stats) => (
+                        stats.tier,
+                        badge_label(stats).encode_utf16().collect::<Vec<_>>(),
+                    ),
+                    None => ('?', Vec::new()),
+                };
+                let half_width = if stats.is_some() {
+                    half_width
+                } else {
+                    half_width.min(21)
+                };
+                let mut rect = RECT {
+                    left: center - half_width,
+                    right: center + half_width,
+                    top: 0,
+                    bottom: BADGE_HEIGHT,
+                };
+                let accent = COLORREF(match grade {
+                    'S' => 0x007fe3ff,
+                    'A' => 0x00f1b8d9,
+                    'B' => 0x00ffcea1,
+                    'C' => 0x00d0d0a3,
+                    _ => 0x00c0b7b0,
+                });
+                rounded_plate(dc, &rect, accent);
+                let mut tier_rect = rect;
+                if stats.is_some() && half_width >= 40 {
+                    tier_rect.right = rect.left + 42;
+                    rect.left = tier_rect.right;
+                    rect.right -= 9;
+                } else {
+                    label.clear();
+                }
+                SetTextColor(dc, accent);
                 DrawTextW(
                     dc,
-                    &mut label,
-                    &mut rect,
-                    DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX,
+                    &mut [grade as u16],
+                    &mut tier_rect,
+                    DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
                 );
+                if !label.is_empty() {
+                    SetTextColor(dc, COLORREF(0x00f5f2ed));
+                    DrawTextW(
+                        dc,
+                        &mut label,
+                        &mut rect,
+                        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX,
+                    );
+                }
+                if let Some(hint) = hint {
+                    let mut rect = RECT {
+                        left: center - half_width,
+                        right: center + half_width,
+                        top: HINT_TOP,
+                        bottom: HINT_TOP + HINT_HEIGHT,
+                    };
+                    rounded_plate(dc, &rect, COLORREF(0x00645748));
+                    rect.left += 7;
+                    rect.right -= 7;
+                    SetTextColor(dc, COLORREF(0x00f5f2ed));
+                    DrawTextW(
+                        dc,
+                        hint,
+                        &mut rect,
+                        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX,
+                    );
+                }
             }
-        }
+        });
         SelectObject(dc, previous);
         let _ = DeleteObject(font.into());
         let _ = EndPaint(hwnd, &paint);
