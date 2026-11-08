@@ -1,4 +1,5 @@
 mod builds;
+mod live;
 mod scan;
 mod tiers;
 
@@ -72,27 +73,10 @@ fn main() -> Result<()> {
     let data: tiers::Dataset =
         serde_json::from_str(include_str!("../data/augments.json")).expect("bundled tier dataset");
     let tiers = data.tiers();
-    let champion = std::env::args()
+    let champion_override = std::env::args()
         .skip_while(|arg| arg != "--champion")
         .nth(1)
         .map(|name| name.to_ascii_lowercase());
-    let champion_picks = champion
-        .as_deref()
-        .and_then(|name| tiers::ChampionPicks::load(&data.patch, name));
-    BUILD_ROWS.replace(champion.as_deref().and_then(|id| {
-        let champion = data.champions.get(id)?;
-        let build = builds::for_champion(id, &champion.role)?;
-        Some(
-            [
-                format!("{}  ·  {}", champion.name, build.name),
-                format!("Core: {} → {}", build.core[0], build.core[1]),
-                format!("Then consider: {}", build.core[2]),
-                format!("Options: {} / {}", build.options[0], build.options[1]),
-                format!("Curated item options  ·  Patch {}", data.patch),
-            ]
-            .map(|line| line.encode_utf16().collect()),
-        )
-    }));
     unsafe {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)?;
         let overlay = create_overlay()?;
@@ -140,19 +124,28 @@ fn main() -> Result<()> {
                     if !SHOW_BUILDS.get() {
                         continue;
                     }
-                    if BUILD_ROWS.with_borrow(Option::is_none) {
-                        println!("Launch with --champion <Riot champion key> to show a build.");
-                        continue;
-                    }
                     let Some(game) = foreground_game() else {
                         continue;
                     };
+                    let champion = champion_override
+                        .as_deref()
+                        .or_else(|| live::champion(&data));
+                    let Some(rows) = champion.and_then(|id| build_rows(&data, id)) else {
+                        println!(
+                            "Champion unavailable. Try again in game or launch with --champion <Riot champion key>."
+                        );
+                        continue;
+                    };
+                    if GetForegroundWindow() != game {
+                        continue;
+                    }
                     let area = game_area(game)?;
                     let width = BUILD_WIDTH.min(area.right - area.left - 32);
                     if width <= 0 || area.bottom - area.top < BUILD_HEIGHT + 32 {
                         continue;
                     }
                     hide(overlay, &mut displayed);
+                    BUILD_ROWS.replace(Some(rows));
                     BUILD_VIEW.set(true);
                     SetWindowPos(
                         overlay,
@@ -176,6 +169,18 @@ fn main() -> Result<()> {
                     let area = game_area(game)?;
                     match scan::scan(&engine, &tiers, area) {
                         Ok(cards) if GetForegroundWindow() == game => {
+                            let champion = champion_override.as_deref().or_else(|| {
+                                cards
+                                    .iter()
+                                    .any(Option::is_some)
+                                    .then(|| live::champion(&data))
+                                    .flatten()
+                            });
+                            if GetForegroundWindow() != game {
+                                continue;
+                            }
+                            let champion_picks = champion
+                                .and_then(|name| tiers::ChampionPicks::load(&data.patch, name));
                             let width = area.right - area.left;
                             let height = area.bottom - area.top;
                             let centers = scan::card_centers(width, height);
@@ -218,7 +223,6 @@ fn main() -> Result<()> {
                                             })
                                         } else {
                                             champion
-                                                .as_deref()
                                                 .and_then(|name| data.combo_hint(name, card))
                                                 .map(|partner| format!("Combo with {partner}"))
                                         }
@@ -257,6 +261,21 @@ fn main() -> Result<()> {
             }
         }
     }
+}
+
+fn build_rows(data: &tiers::Dataset, id: &str) -> Option<[Vec<u16>; 5]> {
+    let champion = data.champions.get(id)?;
+    let build = builds::for_champion(id, &champion.role)?;
+    Some(
+        [
+            format!("{}  ·  {}", champion.name, build.name),
+            format!("Core: {} → {}", build.core[0], build.core[1]),
+            format!("Then consider: {}", build.core[2]),
+            format!("Options: {} / {}", build.options[0], build.options[1]),
+            format!("Curated item options  ·  Patch {}", data.patch),
+        ]
+        .map(|line| line.encode_utf16().collect()),
+    )
 }
 
 fn foreground_game() -> Option<HWND> {

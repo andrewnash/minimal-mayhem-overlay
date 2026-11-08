@@ -15,8 +15,10 @@ seconds or when League loses focus. Press F8 again after a reroll.
 3. Open an ARAM Mayhem augment offer and press F8. A **?** means a card title
    could not be matched confidently.
 
-Launch with `minimal-mayhem-overlay.exe --champion Lucian` to show curated
-combo hints for Lucian. Use the Riot champion key (for example, `MasterYi`).
+The overlay detects your champion from League's local Live Client Data API
+when you request a build or scan a readable offer. To override detection,
+launch with `--champion Lucian` using the Riot champion key (for example,
+`MasterYi`).
 Hints come from the provider's current editorial combo catalog. Historical
 refreshes use the current catalog filtered to augments active in that patch.
 Press **Shift+F8** for the data patch, stats date, and movement in the
@@ -24,8 +26,8 @@ provider's global pick-rate ranking since its previous snapshot.
 
 ### Normal item builds
 
-Launch with `--champion Lucian` and press **Alt+F8** while League is in
-the foreground to see three core items and two alternatives. The view works
+Press **Alt+F8** while League is in the foreground to see three core items
+and two alternatives for your champion. The view works
 without an augment offer or a champion stats file. Routes are curated by
 archetype, with champion overrides where applicable. Champion names and
 default classes come from [Riot Data Dragon](https://developer.riotgames.com/docs/lol#data-dragon).
@@ -35,11 +37,11 @@ Press **Ctrl+F8** to disable or re-enable the build view and item pairing chips.
 
 ```powershell
 pwsh -NoProfile -File scripts/update-champion-picks.ps1 -Champion Lucian
-.\target\release\minimal-mayhem-overlay.exe --champion Lucian
+.\target\release\minimal-mayhem-overlay.exe
 ```
 
 The script writes a small `champion-picks.json` file beside the executable.
-The overlay loads it once and uses it when the champion and patch match.
+The overlay reads it on demand and uses it when the champion and patch match.
 The percentage is the share of sampled Chinese-server games with that champion
 in which the augment was recorded. The pick count is the numerator. The source
 tracks completed matches, so this share differs from picks divided by offers.
@@ -58,7 +60,8 @@ The generated file contains matched counts and excludes wins and win rates.
 The prototype assumes the default offer layout. It uses Windows' built-in en-US
 OCR. Run `minimal-mayhem-overlay.exe --check-ocr` to check that the OCR language is
 available. Screen crops are processed in memory. The app waits for Windows
-messages while idle and makes no network requests. It captures the title regions
+messages while idle. Champion detection reads League's loopback endpoint on
+demand. The overlay makes no internet requests. It captures the title regions
 with Win32 GDI, calls Windows OCR through the Rust `windows` crate, and matches
 the recognized text to augment names with `strsim`.
 
