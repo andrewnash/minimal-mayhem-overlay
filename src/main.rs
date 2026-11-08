@@ -30,7 +30,8 @@ const DETAILS: i32 = 3;
 const BADGE_HEIGHT: i32 = 34;
 const HINT_HEIGHT: i32 = 24;
 const HINT_TOP: i32 = BADGE_HEIGHT + 3;
-const HEADER_HEIGHT: i32 = HINT_HEIGHT + 3;
+const CHAMPION_TOP: i32 = HINT_HEIGHT + 3;
+const HEADER_HEIGHT: i32 = CHAMPION_TOP + HINT_HEIGHT + 3;
 const BADGE_CENTER_Y_PERCENT: i32 = 71;
 const COLOR_KEY: COLORREF = COLORREF(0x00ff00ff);
 
@@ -44,6 +45,7 @@ struct Badge {
     center: i32,
     stats: Option<tiers::CardStats>,
     hint: Option<Vec<u16>>,
+    champion_pick: Option<Vec<u16>>,
 }
 
 fn main() -> Result<()> {
@@ -65,6 +67,9 @@ fn main() -> Result<()> {
         .skip_while(|arg| arg != "--champion")
         .nth(1)
         .map(|name| name.to_ascii_lowercase());
+    let champion_picks = champion
+        .as_deref()
+        .and_then(|name| tiers::ChampionPicks::load(&data.patch, name));
     unsafe {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)?;
         let overlay = create_overlay()?;
@@ -119,6 +124,15 @@ fn main() -> Result<()> {
                             BADGES.replace(std::array::from_fn(|i| Badge {
                                 center: centers[i],
                                 stats: cards[i],
+                                champion_pick: champion_picks
+                                    .as_ref()
+                                    .zip(cards[i])
+                                    .and_then(|(picks, card)| picks.match_share(&data, card))
+                                    .map(|(share, count)| {
+                                        format!("CN {share:.2}% match share  ·  {count} picks")
+                                            .encode_utf16()
+                                            .collect()
+                                    }),
                                 hint: cards[i]
                                     .and_then(|card| {
                                         if details {
@@ -266,6 +280,7 @@ unsafe extern "system" fn window_proc(
                     center,
                     stats,
                     hint,
+                    champion_pick,
                 } = badge;
                 let (center, stats) = (*center, *stats);
                 let (grade, mut label) = match stats {
@@ -320,6 +335,9 @@ unsafe extern "system" fn window_proc(
                 }
                 if let Some(hint) = hint {
                     draw_chip(dc, hint, center, half_width, HEADER_HEIGHT + HINT_TOP);
+                }
+                if let Some(pick) = champion_pick {
+                    draw_chip(dc, pick, center, half_width, CHAMPION_TOP);
                 }
             }
         });

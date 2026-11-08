@@ -17,9 +17,28 @@ seconds or when League loses focus. Press F8 again after a reroll.
 
 Launch with `minimal-mayhem-overlay.exe --champion Lucian` to show curated
 combo hints for Lucian. Use the Riot champion key (for example, `MasterYi`).
-Hints come from the provider's editorial combo catalog.
+Hints come from the provider's current editorial combo catalog. Historical
+refreshes use the current catalog filtered to augments active in that patch.
 Press **Shift+F8** for the data patch, stats date, and movement in the
 provider's global pick-rate ranking since its previous snapshot.
+
+### Optional champion match stats
+
+```powershell
+pwsh -NoProfile -File scripts/update-champion-picks.ps1 -Champion Lucian
+.\target\release\minimal-mayhem-overlay.exe --champion Lucian
+```
+
+The script writes a small `champion-picks.json` file beside the executable.
+The overlay loads it once and uses it when the champion and patch match.
+The percentage is the share of sampled Chinese-server games with that champion
+in which the augment was recorded. The pick count is the numerator. The source
+tracks completed matches, so this share differs from picks divided by offers.
+Unmatched augment names are omitted.
+
+[Champion data: AramHex](https://github.com/czgreat/aramhex-data)
+([CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)).
+The generated file contains matched counts and excludes wins and win rates.
 
 The prototype assumes the default offer layout. It uses Windows' built-in en-US
 OCR. Run `minimal-mayhem-overlay.exe --check-ocr` to check that the OCR language is
