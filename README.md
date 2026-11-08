@@ -28,3 +28,8 @@ The bundled snapshot retains the English name, rarity, and pick rate from each
 active augment row.
 
 Initial title band and card spacing informed by [Hexsight's OCR implementation](https://github.com/bard58/hexsight/blob/v0.1.2/src/ocr.rs).
+
+## License
+
+The code is licensed under [Beerware, Revision 42](LICENSE). The bundled
+augment data is licensed separately under CC BY 4.0, as credited above.
