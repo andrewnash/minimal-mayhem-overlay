@@ -36,6 +36,12 @@ in which the augment was recorded. The pick count is the numerator. The source
 tracks completed matches, so this share differs from picks divided by offers.
 Unmatched augment names are omitted.
 
+When F8 recognizes **Weapon of Destiny**, the overlay can show up to two
+legendary items most often recorded first for the champion in AramHex's
+published sample. Record order comes from completed games. Press **Ctrl+F8**
+to toggle item pairings. They start enabled on every launch. Regenerate an
+older `champion-picks.json` to add the item records.
+
 [Champion data: AramHex](https://github.com/czgreat/aramhex-data)
 ([CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)).
 The generated file contains matched counts and excludes wins and win rates.
@@ -78,3 +84,8 @@ Initial title band and card spacing informed by [Hexsight's OCR implementation](
 
 The code is licensed under [Beerware, Revision 42](LICENSE). The bundled
 augment data is licensed separately under CC BY 4.0, as credited above.
+
+Minimal Mayhem Overlay is not endorsed by Riot Games and does not reflect
+the views or opinions of Riot Games or anyone officially involved in
+producing or managing Riot Games properties. Riot Games and all associated
+properties are trademarks or registered trademarks of Riot Games, Inc.

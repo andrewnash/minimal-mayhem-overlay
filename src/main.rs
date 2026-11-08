@@ -2,7 +2,7 @@ mod scan;
 mod tiers;
 
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     time::{Duration, Instant},
 };
 use windows::{
@@ -27,6 +27,7 @@ use windows::{
 const SCAN: i32 = 1;
 const QUIT: i32 = 2;
 const DETAILS: i32 = 3;
+const TOGGLE_BUILDS: i32 = 4;
 const BADGE_HEIGHT: i32 = 34;
 const HINT_HEIGHT: i32 = 24;
 const HINT_TOP: i32 = BADGE_HEIGHT + 3;
@@ -38,6 +39,7 @@ const COLOR_KEY: COLORREF = COLORREF(0x00ff00ff);
 thread_local! {
     static BADGES: RefCell<[Badge; 3]> = RefCell::default();
     static HEADER: RefCell<Option<Vec<u16>>> = const { RefCell::new(None) };
+    static SHOW_BUILDS: Cell<bool> = const { Cell::new(true) };
 }
 
 #[derive(Default)]
@@ -45,6 +47,7 @@ struct Badge {
     center: i32,
     stats: Option<tiers::CardStats>,
     hint: Option<Vec<u16>>,
+    build_hint: Option<Vec<u16>>,
     champion_pick: Option<Vec<u16>>,
 }
 
@@ -77,12 +80,18 @@ fn main() -> Result<()> {
         RegisterHotKey(None, DETAILS, MOD_NOREPEAT | MOD_SHIFT, VK_F8.0 as u32)?;
         RegisterHotKey(
             None,
+            TOGGLE_BUILDS,
+            MOD_NOREPEAT | MOD_CONTROL,
+            VK_F8.0 as u32,
+        )?;
+        RegisterHotKey(
+            None,
             QUIT,
             MOD_NOREPEAT | MOD_CONTROL | MOD_SHIFT,
             VK_F8.0 as u32,
         )?;
         println!(
-            "Minimal Mayhem Overlay | patch {} | F8 scan | Shift+F8 details | Ctrl+Shift+F8 quit",
+            "Minimal Mayhem Overlay | patch {} | F8 scan | Shift+F8 details | Ctrl+F8 toggle builds | Ctrl+Shift+F8 quit",
             data.patch
         );
 
@@ -96,6 +105,12 @@ fn main() -> Result<()> {
             }
             match message.message {
                 WM_HOTKEY if message.wParam.0 == QUIT as usize => return Ok(()),
+                WM_HOTKEY if message.wParam.0 == TOGGLE_BUILDS as usize => {
+                    let show = !SHOW_BUILDS.get();
+                    SHOW_BUILDS.set(show);
+                    let _ = InvalidateRect(Some(overlay), None, false);
+                    println!("Build pairings {}", if show { "on" } else { "off" });
+                }
                 WM_HOTKEY if matches!(message.wParam.0 as i32, SCAN | DETAILS) => {
                     hide(overlay, &mut displayed);
                     let Ok(game) =
@@ -124,6 +139,16 @@ fn main() -> Result<()> {
                             BADGES.replace(std::array::from_fn(|i| Badge {
                                 center: centers[i],
                                 stats: cards[i],
+                                build_hint: champion_picks
+                                    .as_ref()
+                                    .filter(|_| !details)
+                                    .zip(cards[i])
+                                    .and_then(|(picks, card)| picks.weapon_items(&data, card))
+                                    .map(|items| {
+                                        format!("Recorded: {}", items.join(" / "))
+                                            .encode_utf16()
+                                            .collect()
+                                    }),
                                 champion_pick: champion_picks
                                     .as_ref()
                                     .zip(cards[i])
@@ -280,6 +305,7 @@ unsafe extern "system" fn window_proc(
                     center,
                     stats,
                     hint,
+                    build_hint,
                     champion_pick,
                 } = badge;
                 let (center, stats) = (*center, *stats);
@@ -333,7 +359,8 @@ unsafe extern "system" fn window_proc(
                         DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX,
                     );
                 }
-                if let Some(hint) = hint {
+                let build = build_hint.as_mut().filter(|_| SHOW_BUILDS.get());
+                if let Some(hint) = build.or(hint.as_mut()) {
                     draw_chip(dc, hint, center, half_width, HEADER_HEIGHT + HINT_TOP);
                 }
                 if let Some(pick) = champion_pick {

@@ -43,12 +43,35 @@ foreach ($row in ($augments.rows | Sort-Object -Property augmentId)) {
 }
 if (-not $picks.Count) { throw "No matching augment samples for $Champion" }
 
+$weaponItems = @()
+if ($active.Contains('weapon_of_destiny')) {
+    try {
+        $itemStats = Invoke-RestMethod "$aramHex/hero_augment_items.json" -TimeoutSec 30
+    } catch {
+        if ($_.Exception.Response.StatusCode -ne [Net.HttpStatusCode]::NotFound) { throw }
+    }
+    $records = $itemStats.PSObject.Properties[$hero[0].Name].Value.'3081'.items
+    if ($records) {
+        $catalog = Invoke-RestMethod 'https://arammayhem.com/data/v1/latest/items.json' -TimeoutSec 30
+        $itemNames = @{}
+        foreach ($item in $catalog.rows) {
+            if ($item.gameItemId -and $item.name.en) { $itemNames[[string]$item.gameItemId] = $item.name.en }
+        }
+        $weaponItems = @($records |
+            Where-Object { $_.games -ge 1000 -and -not $_.low_sample -and $itemNames.ContainsKey([string]$_.item) } |
+            Sort-Object -Property @{Expression = 'games'; Descending = $true}, item |
+            ForEach-Object { $itemNames[[string]$_.item] } |
+            Select-Object -Unique -First 2)
+    }
+}
+
 $output = [ordered]@{
     patch = $snapshot.patch
     source_patch = $SourcePatch
     champion = $championRow.championId.ToLowerInvariant()
     games = $hero[0].Value.games
     picks = $picks
+    weapon_items = $weaponItems
     attribution = 'ARAM Mayhem statistics (https://github.com/czgreat/aramhex-data), CC BY-NC 4.0 (https://creativecommons.org/licenses/by-nc/4.0/)'
 }
 $path = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputPath)
@@ -61,3 +84,4 @@ try {
     if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp }
 }
 Write-Output "$($championRow.championId), AramHex ${SourcePatch}: $($picks.Count) matched augment counts across $($output.games) champion games."
+if ($weaponItems.Count) { Write-Output "Weapon of Destiny item records: $($weaponItems -join ' / ')" }

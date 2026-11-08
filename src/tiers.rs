@@ -16,6 +16,8 @@ pub struct ChampionPicks {
     champion: String,
     games: u32,
     picks: HashMap<String, u32>,
+    #[serde(default)]
+    weapon_items: Vec<String>,
 }
 
 impl ChampionPicks {
@@ -31,6 +33,12 @@ impl ChampionPicks {
         let id = &data.augments.get(card.augment_index)?.id;
         let count = *self.picks.get(id)?;
         (count <= self.games).then_some((100.0 * f64::from(count) / f64::from(self.games), count))
+    }
+
+    pub fn weapon_items(&self, data: &Dataset, card: CardStats) -> Option<&[String]> {
+        let id = &data.augments.get(card.augment_index)?.id;
+        (id == "weapon_of_destiny" && !self.weapon_items.is_empty())
+            .then_some(self.weapon_items.as_slice())
     }
 }
 
@@ -142,7 +150,7 @@ mod tests {
             r#"{"patch":"test","augments":[
                 {"id":"transmute_prismatic","name":"Transmute: Prismatic","rarity":"gold","pick_rate":10},
                 {"name":"Transmute: Gold","rarity":"silver","pick_rate":20},
-                {"name":"Another Gold Augment","rarity":"gold","pick_rate":15}
+                {"id":"weapon_of_destiny","name":"Weapon of Destiny","rarity":"gold","pick_rate":15}
             ],"combo_hints":{"lucian":{"transmute_prismatic":"Mystic Punch"}}}"#,
         )
         .unwrap();
@@ -166,9 +174,16 @@ mod tests {
         assert_eq!(data.combo_hint("lucian", exact), Some("Mystic Punch"));
         assert_eq!(data.combo_hint("ashe", exact), None);
         let picks: ChampionPicks = serde_json::from_str(
-            r#"{"patch":"test","champion":"lucian","games":500,"picks":{"transmute_prismatic":75}}"#,
+            r#"{"patch":"test","champion":"lucian","games":500,"picks":{"transmute_prismatic":75},
+                "weapon_items":["Serpent's Fang","The Collector"]}"#,
         )
         .unwrap();
         assert_eq!(picks.match_share(&data, exact), Some((15.0, 75)));
+        assert_eq!(picks.weapon_items(&data, exact), None);
+        let (weapon, _) = tiers.recognize("Weapon of Destiny").unwrap();
+        assert_eq!(
+            picks.weapon_items(&data, weapon).unwrap(),
+            ["Serpent's Fang", "The Collector"]
+        );
     }
 }
