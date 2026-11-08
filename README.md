@@ -8,11 +8,27 @@ Press **Ctrl+Shift+F8** to quit. The rounded badges sit near the bottom of each
 card, above the reroll controls. They are click-through and hide after six
 seconds or when League loses focus. Press F8 again after a reroll.
 
+## Previews
+
+**F8 · Augment stats**
+
+![Three original League augment cards with compact pick-rate badges above the reroll buttons](docs/screenshots/augment-overlay.png)
+
+**Alt+F8 · Champion build**
+
+![Lucian's curated item build panel in the upper-right corner of Howling Abyss](docs/screenshots/champion-build.png)
+
+These are simulated placements on game screenshots. [Augment screenshot from Hexgate](https://hexgate.app/blog/riot-third-party-apps/) · [Howling Abyss screenshot from Riot Games](https://www.leagueoflegends.com/en-gb/news/dev/dev-bringing-mayhem-to-aram/)
+
 ## Run
 
-1. Set League's window mode to **Borderless** and its text language to **English**.
-2. Run `cargo run --release` or launch `target/release/minimal-mayhem-overlay.exe`.
-3. Open an ARAM Mayhem augment offer and press F8. A **?** means a card title
+The current version builds from source on Windows with Rust and the Windows
+build tools. The app uses Windows' English OCR capability.
+
+1. Clone the repository and run `cargo build --release --locked`.
+2. Launch `target/release/minimal-mayhem-overlay.exe`.
+3. Set League's window mode to **Borderless** and its text language to **English**.
+4. Open an ARAM Mayhem augment offer and press F8. A **?** means a card title
    could not be matched confidently.
 
 The overlay detects your champion from League's local Live Client Data API
@@ -91,6 +107,14 @@ bundled snapshot only after validating the export. The app embeds the snapshot
 at build time and grades it offline.
 
 Initial title band and card spacing informed by [Hexsight's OCR implementation](https://github.com/bard58/hexsight/blob/v0.1.2/src/ocr.rs).
+
+## Report an issue
+
+When reporting an OCR or placement issue, include the game resolution, display
+scaling, League patch, and whether the game was in Borderless mode. Run
+`minimal-mayhem-overlay.exe --check-ocr` to check the OCR engine. For code
+changes, run `cargo fmt --check` and `cargo test --locked` on Windows.
+[GitHub issues](https://github.com/andrewnash/minimal-mayhem-overlay/issues)
 
 ## License
 
