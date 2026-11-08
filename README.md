@@ -22,6 +22,15 @@ refreshes use the current catalog filtered to augments active in that patch.
 Press **Shift+F8** for the data patch, stats date, and movement in the
 provider's global pick-rate ranking since its previous snapshot.
 
+### Normal item builds
+
+Launch with `--champion Lucian` and press **Alt+F8** while League is in
+the foreground to see three core items and two alternatives. The view works
+without an augment offer or a champion stats file. Routes are curated by
+archetype, with champion overrides where applicable. Champion names and
+default classes come from [Riot Data Dragon](https://developer.riotgames.com/docs/lol#data-dragon).
+Press **Ctrl+F8** to disable or re-enable the build view and item pairing chips.
+
 ### Optional champion match stats
 
 ```powershell

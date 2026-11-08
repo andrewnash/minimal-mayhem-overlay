@@ -1,3 +1,4 @@
+mod builds;
 mod scan;
 mod tiers;
 
@@ -16,7 +17,7 @@ use windows::{
         UI::{
             HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext},
             Input::KeyboardAndMouse::{
-                MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, RegisterHotKey, VK_F8,
+                MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, RegisterHotKey, VK_F8,
             },
             WindowsAndMessaging::*,
         },
@@ -28,6 +29,9 @@ const SCAN: i32 = 1;
 const QUIT: i32 = 2;
 const DETAILS: i32 = 3;
 const TOGGLE_BUILDS: i32 = 4;
+const SHOW_BUILD: i32 = 5;
+const BUILD_WIDTH: i32 = 446;
+const BUILD_HEIGHT: i32 = 144;
 const BADGE_HEIGHT: i32 = 34;
 const HINT_HEIGHT: i32 = 24;
 const HINT_TOP: i32 = BADGE_HEIGHT + 3;
@@ -40,6 +44,8 @@ thread_local! {
     static BADGES: RefCell<[Badge; 3]> = RefCell::default();
     static HEADER: RefCell<Option<Vec<u16>>> = const { RefCell::new(None) };
     static SHOW_BUILDS: Cell<bool> = const { Cell::new(true) };
+    static BUILD_VIEW: Cell<bool> = const { Cell::new(false) };
+    static BUILD_ROWS: RefCell<Option<[Vec<u16>; 5]>> = const { RefCell::new(None) };
 }
 
 #[derive(Default)]
@@ -73,11 +79,26 @@ fn main() -> Result<()> {
     let champion_picks = champion
         .as_deref()
         .and_then(|name| tiers::ChampionPicks::load(&data.patch, name));
+    BUILD_ROWS.replace(champion.as_deref().and_then(|id| {
+        let champion = data.champions.get(id)?;
+        let build = builds::for_champion(id, &champion.role)?;
+        Some(
+            [
+                format!("{}  ·  {}", champion.name, build.name),
+                format!("Core: {} → {}", build.core[0], build.core[1]),
+                format!("Then consider: {}", build.core[2]),
+                format!("Options: {} / {}", build.options[0], build.options[1]),
+                format!("Curated item options  ·  Patch {}", data.patch),
+            ]
+            .map(|line| line.encode_utf16().collect()),
+        )
+    }));
     unsafe {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)?;
         let overlay = create_overlay()?;
         RegisterHotKey(None, SCAN, MOD_NOREPEAT, VK_F8.0 as u32)?;
         RegisterHotKey(None, DETAILS, MOD_NOREPEAT | MOD_SHIFT, VK_F8.0 as u32)?;
+        RegisterHotKey(None, SHOW_BUILD, MOD_NOREPEAT | MOD_ALT, VK_F8.0 as u32)?;
         RegisterHotKey(
             None,
             TOGGLE_BUILDS,
@@ -91,7 +112,7 @@ fn main() -> Result<()> {
             VK_F8.0 as u32,
         )?;
         println!(
-            "Minimal Mayhem Overlay | patch {} | F8 scan | Shift+F8 details | Ctrl+F8 toggle builds | Ctrl+Shift+F8 quit",
+            "Minimal Mayhem Overlay | patch {} | F8 scan | Shift+F8 details | Alt+F8 build | Ctrl+F8 toggle builds | Ctrl+Shift+F8 quit",
             data.patch
         );
 
@@ -108,19 +129,50 @@ fn main() -> Result<()> {
                 WM_HOTKEY if message.wParam.0 == TOGGLE_BUILDS as usize => {
                     let show = !SHOW_BUILDS.get();
                     SHOW_BUILDS.set(show);
+                    if !show && BUILD_VIEW.get() {
+                        hide(overlay, &mut displayed);
+                    } else {
+                        let _ = InvalidateRect(Some(overlay), None, false);
+                    }
+                    println!("Build options {}", if show { "on" } else { "off" });
+                }
+                WM_HOTKEY if message.wParam.0 == SHOW_BUILD as usize => {
+                    if !SHOW_BUILDS.get() {
+                        continue;
+                    }
+                    if BUILD_ROWS.with_borrow(Option::is_none) {
+                        println!("Launch with --champion <Riot champion key> to show a build.");
+                        continue;
+                    }
+                    let Some(game) = foreground_game() else {
+                        continue;
+                    };
+                    let area = game_area(game)?;
+                    let width = BUILD_WIDTH.min(area.right - area.left - 32);
+                    if width <= 0 || area.bottom - area.top < BUILD_HEIGHT + 32 {
+                        continue;
+                    }
+                    hide(overlay, &mut displayed);
+                    BUILD_VIEW.set(true);
+                    SetWindowPos(
+                        overlay,
+                        Some(HWND_TOPMOST),
+                        area.right - width - 16,
+                        area.top + 16,
+                        width,
+                        BUILD_HEIGHT,
+                        SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                    )?;
                     let _ = InvalidateRect(Some(overlay), None, false);
-                    println!("Build pairings {}", if show { "on" } else { "off" });
+                    displayed = Some((game, Instant::now()));
+                    SetTimer(Some(overlay), 1, 200, None);
                 }
                 WM_HOTKEY if matches!(message.wParam.0 as i32, SCAN | DETAILS) => {
                     hide(overlay, &mut displayed);
-                    let Ok(game) =
-                        FindWindowW(w!("RiotWindowClass"), w!("League of Legends (TM) Client"))
-                    else {
+                    let Some(game) = foreground_game() else {
                         continue;
                     };
-                    if GetForegroundWindow() != game {
-                        continue;
-                    }
+                    BUILD_VIEW.set(false);
                     let area = game_area(game)?;
                     match scan::scan(&engine, &tiers, area) {
                         Ok(cards) if GetForegroundWindow() == game => {
@@ -204,6 +256,13 @@ fn main() -> Result<()> {
                 }
             }
         }
+    }
+}
+
+fn foreground_game() -> Option<HWND> {
+    unsafe {
+        let game = FindWindowW(w!("RiotWindowClass"), w!("League of Legends (TM) Client")).ok()?;
+        (GetForegroundWindow() == game).then_some(game)
     }
 }
 
@@ -293,85 +352,125 @@ unsafe extern "system" fn window_proc(
             w!("Segoe UI"),
         );
         let previous = SelectObject(dc, font.into());
-        BADGES.with_borrow_mut(|badges| {
-            let half_width = ((badges[1].center - badges[0].center - 8) / 2).clamp(1, 161);
-            HEADER.with_borrow_mut(|header| {
-                if let Some(label) = header {
-                    draw_chip(dc, label, badges[1].center, half_width, 0);
-                }
-            });
-            for badge in badges {
-                let Badge {
-                    center,
-                    stats,
-                    hint,
-                    build_hint,
-                    champion_pick,
-                } = badge;
-                let (center, stats) = (*center, *stats);
-                let (grade, mut label) = match stats {
-                    Some(stats) => (
-                        stats.tier,
-                        badge_label(stats).encode_utf16().collect::<Vec<_>>(),
-                    ),
-                    None => ('?', Vec::new()),
-                };
-                let half_width = if stats.is_some() {
-                    half_width
-                } else {
-                    half_width.min(21)
-                };
-                let mut rect = RECT {
-                    left: center - half_width,
-                    right: center + half_width,
-                    top: HEADER_HEIGHT,
-                    bottom: HEADER_HEIGHT + BADGE_HEIGHT,
-                };
-                let accent = COLORREF(match grade {
-                    'S' => 0x007fe3ff,
-                    'A' => 0x00f1b8d9,
-                    'B' => 0x00ffcea1,
-                    'C' => 0x00d0d0a3,
-                    _ => 0x00c0b7b0,
+        if BUILD_VIEW.get() {
+            let mut area = RECT::default();
+            if GetClientRect(hwnd, &mut area).is_ok() {
+                BUILD_ROWS.with_borrow_mut(|rows| {
+                    if let Some(rows) = rows {
+                        draw_build(dc, &area, rows);
+                    }
                 });
-                rounded_plate(dc, &rect, accent);
-                let mut tier_rect = rect;
-                if stats.is_some() && half_width >= 40 {
-                    tier_rect.right = rect.left + 42;
-                    rect.left = tier_rect.right;
-                    rect.right -= 9;
-                } else {
-                    label.clear();
-                }
-                SetTextColor(dc, accent);
-                DrawTextW(
-                    dc,
-                    &mut [grade as u16],
-                    &mut tier_rect,
-                    DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
-                );
-                if !label.is_empty() {
-                    SetTextColor(dc, COLORREF(0x00f5f2ed));
+            }
+        } else {
+            BADGES.with_borrow_mut(|badges| {
+                let half_width = ((badges[1].center - badges[0].center - 8) / 2).clamp(1, 161);
+                HEADER.with_borrow_mut(|header| {
+                    if let Some(label) = header {
+                        draw_chip(dc, label, badges[1].center, half_width, 0);
+                    }
+                });
+                for badge in badges {
+                    let Badge {
+                        center,
+                        stats,
+                        hint,
+                        build_hint,
+                        champion_pick,
+                    } = badge;
+                    let (center, stats) = (*center, *stats);
+                    let (grade, mut label) = match stats {
+                        Some(stats) => (
+                            stats.tier,
+                            badge_label(stats).encode_utf16().collect::<Vec<_>>(),
+                        ),
+                        None => ('?', Vec::new()),
+                    };
+                    let half_width = if stats.is_some() {
+                        half_width
+                    } else {
+                        half_width.min(21)
+                    };
+                    let mut rect = RECT {
+                        left: center - half_width,
+                        right: center + half_width,
+                        top: HEADER_HEIGHT,
+                        bottom: HEADER_HEIGHT + BADGE_HEIGHT,
+                    };
+                    let accent = COLORREF(match grade {
+                        'S' => 0x007fe3ff,
+                        'A' => 0x00f1b8d9,
+                        'B' => 0x00ffcea1,
+                        'C' => 0x00d0d0a3,
+                        _ => 0x00c0b7b0,
+                    });
+                    rounded_plate(dc, &rect, accent);
+                    let mut tier_rect = rect;
+                    if stats.is_some() && half_width >= 40 {
+                        tier_rect.right = rect.left + 42;
+                        rect.left = tier_rect.right;
+                        rect.right -= 9;
+                    } else {
+                        label.clear();
+                    }
+                    SetTextColor(dc, accent);
                     DrawTextW(
                         dc,
-                        &mut label,
-                        &mut rect,
-                        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX,
+                        &mut [grade as u16],
+                        &mut tier_rect,
+                        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
                     );
+                    if !label.is_empty() {
+                        SetTextColor(dc, COLORREF(0x00f5f2ed));
+                        DrawTextW(
+                            dc,
+                            &mut label,
+                            &mut rect,
+                            DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX,
+                        );
+                    }
+                    let build = build_hint.as_mut().filter(|_| SHOW_BUILDS.get());
+                    if let Some(hint) = build.or(hint.as_mut()) {
+                        draw_chip(dc, hint, center, half_width, HEADER_HEIGHT + HINT_TOP);
+                    }
+                    if let Some(pick) = champion_pick {
+                        draw_chip(dc, pick, center, half_width, CHAMPION_TOP);
+                    }
                 }
-                let build = build_hint.as_mut().filter(|_| SHOW_BUILDS.get());
-                if let Some(hint) = build.or(hint.as_mut()) {
-                    draw_chip(dc, hint, center, half_width, HEADER_HEIGHT + HINT_TOP);
-                }
-                if let Some(pick) = champion_pick {
-                    draw_chip(dc, pick, center, half_width, CHAMPION_TOP);
-                }
-            }
-        });
+            });
+        }
         SelectObject(dc, previous);
         let _ = DeleteObject(font.into());
         let _ = EndPaint(hwnd, &paint);
         LRESULT(0)
+    }
+}
+
+unsafe fn draw_build(dc: HDC, area: &RECT, rows: &mut [Vec<u16>; 5]) {
+    unsafe {
+        rounded_plate(dc, area, COLORREF(0x00645748));
+        for (index, row) in rows.iter_mut().enumerate() {
+            let top = 12 + index as i32 * 24;
+            let mut rect = RECT {
+                left: 16,
+                right: area.right - 16,
+                top,
+                bottom: top + 24,
+            };
+            SetTextColor(
+                dc,
+                COLORREF(match index {
+                    0 => 0x007fe3ff,
+                    4 => 0x00b8aca3,
+                    _ => 0x00f5f2ed,
+                }),
+            );
+            DrawTextW(
+                dc,
+                row,
+                &mut rect,
+                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX,
+            );
+        }
     }
 }
 

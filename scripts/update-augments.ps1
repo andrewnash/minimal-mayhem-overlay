@@ -69,6 +69,14 @@ $rows = $augments | ForEach-Object { '    ' + (ConvertTo-Json -InputObject $_ -C
 $hintRows = foreach ($champion in ($comboHints.Keys | Sort-Object)) {
     '    "' + $champion + '": ' + (ConvertTo-Json -InputObject $comboHints[$champion] -Compress)
 }
+$major, $minor = $sourcePatch.Split('.')
+$dragonPatch = "$([int]$major - 10).$minor.1"
+$champions = Invoke-RestMethod "https://ddragon.leagueoflegends.com/cdn/$dragonPatch/data/en_US/champion.json" -TimeoutSec 30
+if ($champions.version -ne $dragonPatch -or -not $champions.data) { throw 'Unexpected Data Dragon champion export' }
+$championRows = foreach ($champion in ($champions.data.PSObject.Properties | Sort-Object Name)) {
+    $entry = [ordered]@{ name = $champion.Value.name; role = $champion.Value.tags[0] }
+    '    "' + $champion.Name.ToLowerInvariant() + '": ' + (ConvertTo-Json -InputObject $entry -Compress)
+}
 $json = @"
 {
   "patch": "$sourcePatch",
@@ -78,6 +86,9 @@ $($rows -join ",`n")
   ],
   "combo_hints": {
 $($hintRows -join ",`n")
+  },
+  "champions": {
+$($championRows -join ",`n")
   }
 }
 "@

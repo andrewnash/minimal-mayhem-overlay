@@ -8,6 +8,14 @@ pub struct Dataset {
     augments: Vec<Augment>,
     #[serde(default)]
     combo_hints: HashMap<String, HashMap<String, String>>,
+    #[serde(default)]
+    pub champions: HashMap<String, Champion>,
+}
+
+#[derive(Deserialize)]
+pub struct Champion {
+    pub name: String,
+    pub role: String,
 }
 
 #[derive(Deserialize)]
