@@ -1,4 +1,5 @@
 mod builds;
+mod icons;
 mod live;
 mod scan;
 mod tiers;
@@ -46,7 +47,7 @@ thread_local! {
     static HEADER: RefCell<Option<Vec<u16>>> = const { RefCell::new(None) };
     static SHOW_BUILDS: Cell<bool> = const { Cell::new(true) };
     static BUILD_VIEW: Cell<bool> = const { Cell::new(false) };
-    static BUILD_ROWS: RefCell<Option<[Vec<u16>; 5]>> = const { RefCell::new(None) };
+    static BUILD_ROWS: RefCell<Option<[BuildLine; 5]>> = const { RefCell::new(None) };
 }
 
 #[derive(Default)]
@@ -54,8 +55,22 @@ struct Badge {
     center: i32,
     stats: Option<tiers::CardStats>,
     hint: Option<Vec<u16>>,
-    build_hint: Option<Vec<u16>>,
+    build_hint: Option<BuildLine>,
     champion_pick: Option<Vec<u16>>,
+}
+
+struct BuildLine {
+    text: Vec<u16>,
+    icons: [Option<icons::Icon>; 2],
+}
+
+impl BuildLine {
+    fn new(label: String, items: &[&str]) -> Self {
+        Self {
+            text: label.encode_utf16().collect(),
+            icons: std::array::from_fn(|i| items.get(i).and_then(|name| icons::find(name))),
+        }
+    }
 }
 
 fn main() -> Result<()> {
@@ -202,9 +217,10 @@ fn main() -> Result<()> {
                                     .zip(cards[i])
                                     .and_then(|(picks, card)| picks.weapon_items(&data, card))
                                     .map(|items| {
-                                        format!("Recorded: {}", items.join(" / "))
-                                            .encode_utf16()
-                                            .collect()
+                                        let names: [&str; 2] = std::array::from_fn(|i| {
+                                            items.get(i).map_or("", String::as_str)
+                                        });
+                                        BuildLine::new(items.join(" / "), &names)
                                     }),
                                 champion_pick: champion_picks
                                     .as_ref()
@@ -263,19 +279,28 @@ fn main() -> Result<()> {
     }
 }
 
-fn build_rows(data: &tiers::Dataset, id: &str) -> Option<[Vec<u16>; 5]> {
+fn build_rows(data: &tiers::Dataset, id: &str) -> Option<[BuildLine; 5]> {
     let champion = data.champions.get(id)?;
     let build = builds::for_champion(id, &champion.role)?;
-    Some(
-        [
-            format!("{}  ·  {}", champion.name, build.name),
+    Some([
+        BuildLine::new(format!("{}  ·  {}", champion.name, build.name), &[]),
+        BuildLine::new(
             format!("Core: {} → {}", build.core[0], build.core[1]),
+            &build.core[..2],
+        ),
+        BuildLine::new(
             format!("Then consider: {}", build.core[2]),
+            &build.core[2..],
+        ),
+        BuildLine::new(
             format!("Options: {} / {}", build.options[0], build.options[1]),
+            &build.options,
+        ),
+        BuildLine::new(
             format!("Curated item options  ·  Patch {}", data.patch),
-        ]
-        .map(|line| line.encode_utf16().collect()),
-    )
+            &[],
+        ),
+    ])
 }
 
 fn foreground_game() -> Option<HWND> {
@@ -448,7 +473,16 @@ unsafe extern "system" fn window_proc(
                         );
                     }
                     let build = build_hint.as_mut().filter(|_| SHOW_BUILDS.get());
-                    if let Some(hint) = build.or(hint.as_mut()) {
+                    if let Some(build) = build {
+                        draw_item_chip(
+                            dc,
+                            &mut build.text,
+                            center,
+                            half_width,
+                            HEADER_HEIGHT + HINT_TOP,
+                            build.icons,
+                        );
+                    } else if let Some(hint) = hint {
                         draw_chip(dc, hint, center, half_width, HEADER_HEIGHT + HINT_TOP);
                     }
                     if let Some(pick) = champion_pick {
@@ -464,7 +498,7 @@ unsafe extern "system" fn window_proc(
     }
 }
 
-unsafe fn draw_build(dc: HDC, area: &RECT, rows: &mut [Vec<u16>; 5]) {
+unsafe fn draw_build(dc: HDC, area: &RECT, rows: &mut [BuildLine; 5]) {
     unsafe {
         rounded_plate(dc, area, COLORREF(0x00645748));
         for (index, row) in rows.iter_mut().enumerate() {
@@ -483,9 +517,10 @@ unsafe fn draw_build(dc: HDC, area: &RECT, rows: &mut [Vec<u16>; 5]) {
                     _ => 0x00f5f2ed,
                 }),
             );
+            draw_row_icons(dc, &mut rect, row.icons);
             DrawTextW(
                 dc,
-                row,
+                &mut row.text,
                 &mut rect,
                 DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX,
             );
@@ -494,6 +529,17 @@ unsafe fn draw_build(dc: HDC, area: &RECT, rows: &mut [Vec<u16>; 5]) {
 }
 
 unsafe fn draw_chip(dc: HDC, label: &mut [u16], center: i32, half_width: i32, top: i32) {
+    unsafe { draw_item_chip(dc, label, center, half_width, top, [None; 2]) }
+}
+
+unsafe fn draw_item_chip(
+    dc: HDC,
+    label: &mut [u16],
+    center: i32,
+    half_width: i32,
+    top: i32,
+    icons: [Option<icons::Icon>; 2],
+) {
     unsafe {
         let mut rect = RECT {
             left: center - half_width,
@@ -504,6 +550,7 @@ unsafe fn draw_chip(dc: HDC, label: &mut [u16], center: i32, half_width: i32, to
         rounded_plate(dc, &rect, COLORREF(0x00645748));
         rect.left += 7;
         rect.right -= 7;
+        draw_row_icons(dc, &mut rect, icons);
         SetTextColor(dc, COLORREF(0x00f5f2ed));
         DrawTextW(
             dc,
@@ -511,6 +558,17 @@ unsafe fn draw_chip(dc: HDC, label: &mut [u16], center: i32, half_width: i32, to
             &mut rect,
             DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX,
         );
+    }
+}
+
+fn draw_row_icons(dc: HDC, rect: &mut RECT, icons: [Option<icons::Icon>; 2]) {
+    if rect.right - rect.left < 100 {
+        return;
+    }
+    let y = rect.top + (rect.bottom - rect.top - icons::SIZE) / 2;
+    for icon in icons.into_iter().flatten() {
+        icons::draw(dc, rect.left, y, icon);
+        rect.left += icons::SIZE + 4;
     }
 }
 

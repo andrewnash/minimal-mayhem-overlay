@@ -16,7 +16,7 @@ seconds or when League loses focus. Press F8 again after a reroll.
 
 **Alt+F8 · Champion build**
 
-![Lucian's curated item build panel in the upper-right corner of Howling Abyss](docs/screenshots/champion-build.png)
+![Lucian's curated item build panel with Riot item icons in the upper-right corner of Howling Abyss](docs/screenshots/champion-build.png)
 
 These are simulated placements on game screenshots. [Augment screenshot from Hexgate](https://hexgate.app/blog/riot-third-party-apps/) · [Howling Abyss screenshot from Riot Games](https://www.leagueoflegends.com/en-gb/news/dev/dev-bringing-mayhem-to-aram/)
 
@@ -47,6 +47,7 @@ and two alternatives for your champion. The view works
 without an augment offer or a champion stats file. Routes are curated by
 archetype, with champion overrides where applicable. Champion names and
 default classes come from [Riot Data Dragon](https://developer.riotgames.com/docs/lol#data-dragon).
+The build panel and Weapon of Destiny pairings use bundled Data Dragon icons.
 Press **Ctrl+F8** to disable or re-enable the build view and item pairing chips.
 
 ### Optional champion match stats
@@ -98,6 +99,7 @@ repository root using PowerShell 7 and Rust:
 
 ```powershell
 pwsh -NoProfile -File scripts/update-augments.ps1
+pwsh -NoProfile -File scripts/update-item-icons.ps1
 cargo build --release --locked
 ```
 

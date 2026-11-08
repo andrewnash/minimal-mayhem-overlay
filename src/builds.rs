@@ -125,7 +125,10 @@ mod tests {
         let data: Dataset = serde_json::from_str(include_str!("../data/augments.json")).unwrap();
         assert!(!data.champions.is_empty());
         for (key, champion) in &data.champions {
-            assert!(for_champion(key, &champion.role).is_some(), "{key}");
+            let build = for_champion(key, &champion.role).unwrap_or_else(|| panic!("{key}"));
+            for item in build.core.into_iter().chain(build.options) {
+                assert!(crate::icons::find(item).is_some(), "{key}: {item}");
+            }
         }
         assert_eq!(
             for_champion("lucian", "Marksman").unwrap().core[0],
