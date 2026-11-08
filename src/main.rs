@@ -30,7 +30,7 @@ const BADGE_HEIGHT: i32 = 34;
 const COLOR_KEY: COLORREF = COLORREF(0x00ff00ff);
 
 thread_local! {
-    static BADGES: Cell<[(i32, char); 3]> = const { Cell::new([(0, '?'); 3]) };
+    static BADGES: Cell<[(i32, Option<tiers::CardStats>); 3]> = const { Cell::new([(0, None); 3]) };
 }
 
 fn main() -> Result<()> {
@@ -85,11 +85,11 @@ fn main() -> Result<()> {
                     }
                     let area = game_area(game)?;
                     match scan::scan(&engine, &tiers, area) {
-                        Ok(grades) if GetForegroundWindow() == game => {
+                        Ok(cards) if GetForegroundWindow() == game => {
                             let width = area.right - area.left;
                             let height = area.bottom - area.top;
                             let centers = scan::card_centers(width, height);
-                            BADGES.set(std::array::from_fn(|i| (centers[i], grades[i])));
+                            BADGES.set(std::array::from_fn(|i| (centers[i], cards[i])));
                             SetWindowPos(
                                 overlay,
                                 Some(HWND_TOPMOST),
@@ -193,7 +193,7 @@ unsafe extern "system" fn window_proc(
         SetBkMode(dc, TRANSPARENT);
         SetTextColor(dc, COLORREF(0x00ffffff));
         let font = CreateFontW(
-            -24,
+            -16,
             0,
             0,
             0,
@@ -209,10 +209,29 @@ unsafe extern "system" fn window_proc(
             w!("Segoe UI"),
         );
         let previous = SelectObject(dc, font.into());
-        for (center, grade) in BADGES.get() {
+        let badges = BADGES.get();
+        let half_width = ((badges[1].0 - badges[0].0 - 8) / 2).clamp(1, 120);
+        for (center, stats) in badges {
+            let (grade, mut label) = match stats {
+                Some(stats) => (
+                    stats.tier,
+                    format!(
+                        "{}  ·  {:.2}% pick  ·  #{}/{}",
+                        stats.tier, stats.pick_rate, stats.rarity_rank, stats.rarity_count
+                    )
+                    .encode_utf16()
+                    .collect::<Vec<_>>(),
+                ),
+                None => ('?', vec!['?' as u16]),
+            };
+            let half_width = if stats.is_some() {
+                half_width
+            } else {
+                half_width.min(21)
+            };
             let mut rect = RECT {
-                left: center - 21,
-                right: center + 21,
+                left: center - half_width,
+                right: center + half_width,
                 top: 0,
                 bottom: BADGE_HEIGHT,
             };
@@ -226,9 +245,9 @@ unsafe extern "system" fn window_proc(
             fill(dc, &rect, COLORREF(color));
             DrawTextW(
                 dc,
-                &mut [grade as u16],
+                &mut label,
                 &mut rect,
-                DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+                DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX,
             );
         }
         SelectObject(dc, previous);

@@ -1,7 +1,8 @@
 # Minimal Mayhem Overlay
 
 A native Rust overlay for ARAM Mayhem on Windows. Press **F8** while an augment
-offer is visible to read its three title regions once and display **S–D** badges.
+offer is visible to read its three title regions once and display each card's
+**S–D tier**, **overall pick rate**, and **pick-rate rank within its rarity**.
 Press **Ctrl+Shift+F8** to quit. The badges are click-through and hide after six
 seconds or when League loses focus. Press F8 again after a reroll.
 
@@ -15,7 +16,9 @@ seconds or when League loses focus. Press F8 again after a reroll.
 The prototype assumes the default offer layout. It uses Windows' built-in en-US
 OCR. Run `minimal-mayhem-overlay.exe --check-ocr` to check that the OCR language is
 available. Screen crops are processed in memory. The app waits for Windows
-messages while idle and makes no network requests.
+messages while idle and makes no network requests. It captures the title regions
+with Win32 GDI, calls Windows OCR through the Rust `windows` crate, and matches
+the recognized text to augment names with `strsim`.
 
 ## How tiers are calculated
 

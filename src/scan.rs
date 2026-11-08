@@ -7,7 +7,7 @@ use windows::{
     core::{HSTRING, Result},
 };
 
-use crate::tiers::Tiers;
+use crate::tiers::{CardStats, Tiers};
 
 pub fn english_ocr() -> Result<OcrEngine> {
     let english = Language::CreateLanguage(&HSTRING::from("en-US"))?;
@@ -19,15 +19,15 @@ pub fn card_centers(width: i32, height: i32) -> [i32; 3] {
     [width / 2 - spacing, width / 2, width / 2 + spacing]
 }
 
-pub fn scan(engine: &OcrEngine, tiers: &Tiers, game: RECT) -> Result<[char; 3]> {
+pub fn scan(engine: &OcrEngine, tiers: &Tiers, game: RECT) -> Result<[Option<CardStats>; 3]> {
     let width = game.right - game.left;
     let height = game.bottom - game.top;
     let centers = card_centers(width, height);
     let crop_width = (centers[1] - centers[0]) * 94 / 100;
     let crop_height = height * 19 / 100;
     let top = game.top + height * 33 / 100;
-    let mut grades = ['?'; 3];
-    for (grade, center) in grades.iter_mut().zip(centers) {
+    let mut cards = [None; 3];
+    for (card, center) in cards.iter_mut().zip(centers) {
         let left = game.left + center - crop_width / 2;
         let Some(pixels) = capture(left, top, crop_width, crop_height) else {
             continue;
@@ -47,17 +47,15 @@ pub fn scan(engine: &OcrEngine, tiers: &Tiers, game: RECT) -> Result<[char; 3]> 
         let mut best = None;
         for line in lines {
             let text = line.Text()?.to_string_lossy();
-            if let Some((_, tier, confidence)) = tiers.recognize(&text)
+            if let Some((stats, confidence)) = tiers.recognize(&text)
                 && best.is_none_or(|(_, score)| confidence > score)
             {
-                best = Some((tier, confidence));
+                best = Some((stats, confidence));
             }
         }
-        if let Some((tier, _)) = best {
-            *grade = tier;
-        }
+        *card = best.map(|(stats, _)| stats);
     }
-    Ok(grades)
+    Ok(cards)
 }
 
 fn capture(x: i32, y: i32, width: i32, height: i32) -> Option<Vec<u8>> {
