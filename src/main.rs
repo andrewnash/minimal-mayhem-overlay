@@ -27,6 +27,7 @@ use windows::{
 const SCAN: i32 = 1;
 const QUIT: i32 = 2;
 const BADGE_HEIGHT: i32 = 34;
+const BADGE_CENTER_Y_PERCENT: i32 = 71;
 const COLOR_KEY: COLORREF = COLORREF(0x00ff00ff);
 
 thread_local! {
@@ -94,7 +95,7 @@ fn main() -> Result<()> {
                                 overlay,
                                 Some(HWND_TOPMOST),
                                 area.left,
-                                area.top + height * 33 / 100 - BADGE_HEIGHT - 2,
+                                area.top + height * BADGE_CENTER_Y_PERCENT / 100 - BADGE_HEIGHT / 2,
                                 width,
                                 BADGE_HEIGHT,
                                 SWP_NOACTIVATE | SWP_SHOWWINDOW,
@@ -191,7 +192,6 @@ unsafe extern "system" fn window_proc(
         let dc = BeginPaint(hwnd, &mut paint);
         fill(dc, &paint.rcPaint, COLOR_KEY);
         SetBkMode(dc, TRANSPARENT);
-        SetTextColor(dc, COLORREF(0x00ffffff));
         let font = CreateFontW(
             -16,
             0,
@@ -216,13 +216,13 @@ unsafe extern "system" fn window_proc(
                 Some(stats) => (
                     stats.tier,
                     format!(
-                        "{}  ·  {:.2}% pick  ·  #{}/{}",
-                        stats.tier, stats.pick_rate, stats.rarity_rank, stats.rarity_count
+                        "{:.2}% pick  ·  #{}/{}",
+                        stats.pick_rate, stats.rarity_rank, stats.rarity_count
                     )
                     .encode_utf16()
                     .collect::<Vec<_>>(),
                 ),
-                None => ('?', vec!['?' as u16]),
+                None => ('?', Vec::new()),
             };
             let half_width = if stats.is_some() {
                 half_width
@@ -235,25 +235,57 @@ unsafe extern "system" fn window_proc(
                 top: 0,
                 bottom: BADGE_HEIGHT,
             };
-            let color = match grade {
-                'S' => 0x00572bc7,
-                'A' => 0x0091369e,
-                'B' => 0x00a3631d,
-                'C' => 0x005b6b21,
-                _ => 0x00484343,
-            };
-            fill(dc, &rect, COLORREF(color));
+            let accent = COLORREF(match grade {
+                'S' => 0x007fe3ff,
+                'A' => 0x00f1b8d9,
+                'B' => 0x00ffcea1,
+                'C' => 0x00d0d0a3,
+                _ => 0x00c0b7b0,
+            });
+            rounded_plate(dc, &rect, accent);
+            let mut tier_rect = rect;
+            if stats.is_some() && half_width >= 40 {
+                tier_rect.right = rect.left + 42;
+                rect.left = tier_rect.right;
+                rect.right -= 9;
+            } else {
+                label.clear();
+            }
+            SetTextColor(dc, accent);
             DrawTextW(
                 dc,
-                &mut label,
-                &mut rect,
-                DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX,
+                &mut [grade as u16],
+                &mut tier_rect,
+                DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
             );
+            if !label.is_empty() {
+                SetTextColor(dc, COLORREF(0x00f5f2ed));
+                DrawTextW(
+                    dc,
+                    &mut label,
+                    &mut rect,
+                    DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX,
+                );
+            }
         }
         SelectObject(dc, previous);
         let _ = DeleteObject(font.into());
         let _ = EndPaint(hwnd, &paint);
         LRESULT(0)
+    }
+}
+
+unsafe fn rounded_plate(dc: HDC, rect: &RECT, accent: COLORREF) {
+    unsafe {
+        let pen = CreatePen(PS_SOLID, 1, accent);
+        let brush = CreateSolidBrush(COLORREF(0x00221b13));
+        let old_pen = SelectObject(dc, pen.into());
+        let old_brush = SelectObject(dc, brush.into());
+        let _ = RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom, 22, 22);
+        SelectObject(dc, old_brush);
+        SelectObject(dc, old_pen);
+        let _ = DeleteObject(brush.into());
+        let _ = DeleteObject(pen.into());
     }
 }
 
