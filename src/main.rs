@@ -19,7 +19,7 @@ use windows::{
         UI::{
             HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext},
             Input::KeyboardAndMouse::{
-                MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, RegisterHotKey, VK_F8, VK_M,
+                MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, RegisterHotKey, VK_F8, VK_J, VK_M,
             },
             WindowsAndMessaging::*,
         },
@@ -97,25 +97,31 @@ fn main() -> Result<()> {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)?;
         let overlay = create_overlay()?;
         let primary_scan = RegisterHotKey(None, SCAN, MOD_NOREPEAT, VK_F8.0 as u32);
-        let alternate_scan = RegisterHotKey(
-            None,
-            SCAN_ALTERNATE,
-            MOD_NOREPEAT | MOD_CONTROL | MOD_ALT,
-            VK_M.0 as u32,
-        );
-        match (primary_scan, alternate_scan) {
-            (Err(primary), Err(alternate)) => {
-                eprintln!("F8 scan is unavailable: {primary}");
-                return Err(alternate);
+        let alternate_scan = [
+            ("Ctrl+Alt+M", MOD_ALT, VK_M),
+            ("Ctrl+Shift+M", MOD_SHIFT, VK_M),
+            ("Ctrl+Alt+J", MOD_ALT, VK_J),
+        ]
+        .into_iter()
+        .find_map(|(label, modifier, key)| {
+            RegisterHotKey(
+                None,
+                SCAN_ALTERNATE,
+                MOD_NOREPEAT | MOD_CONTROL | modifier,
+                key.0 as u32,
+            )
+            .ok()
+            .map(|()| label)
+        });
+        let scan_keys = match (primary_scan, alternate_scan) {
+            (Ok(()), Some(label)) => format!("F8 or {label}"),
+            (Ok(()), None) => "F8".into(),
+            (Err(_), Some(label)) => label.into(),
+            (Err(error), None) => {
+                eprintln!("None of the scan shortcuts could be registered.");
+                return Err(error);
             }
-            (Err(error), Ok(())) => {
-                eprintln!("F8 is unavailable ({error}). Use Ctrl+Alt+M to scan.")
-            }
-            (Ok(()), Err(error)) => {
-                eprintln!("Ctrl+Alt+M is unavailable ({error}). Use F8 to scan.")
-            }
-            (Ok(()), Ok(())) => {}
-        }
+        };
         RegisterHotKey(None, DETAILS, MOD_NOREPEAT | MOD_SHIFT, VK_F8.0 as u32)?;
         RegisterHotKey(None, SHOW_BUILD, MOD_NOREPEAT | MOD_ALT, VK_F8.0 as u32)?;
         RegisterHotKey(
@@ -131,7 +137,7 @@ fn main() -> Result<()> {
             VK_F8.0 as u32,
         )?;
         println!(
-            "Minimal Mayhem Overlay | patch {} | F8 or Ctrl+Alt+M scan | Shift+F8 details | Alt+F8 build | Ctrl+F8 toggle builds | Ctrl+Shift+F8 quit",
+            "Minimal Mayhem Overlay | patch {} | {scan_keys} scan | Shift+F8 details | Alt+F8 build | Ctrl+F8 toggle builds | Ctrl+Shift+F8 quit",
             data.patch
         );
 
