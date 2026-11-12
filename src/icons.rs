@@ -58,24 +58,25 @@ mod tests {
     #[test]
     fn draws_a_real_icon_to_a_gdi_surface() {
         let icon = find("Essence Reaver").unwrap();
-        let (x, y) = (10, 6);
-        let offset = ((y * SIZE + x) * 4) as usize;
-        let expected = u32::from_le_bytes([icon[offset + 2], icon[offset + 1], icon[offset], 0]);
-        assert_ne!(expected, 0);
-        let actual = unsafe {
+        let (before, after) = unsafe {
             let mut pixels = std::ptr::null_mut();
             let surface =
                 CreateDIBSection(None, &bitmap_info(), DIB_RGB_COLORS, &mut pixels, None, 0)
                     .unwrap();
             let dc = CreateCompatibleDC(None);
             let old = SelectObject(dc, surface.into());
+            PatBlt(dc, 0, 0, SIZE, SIZE, BLACKNESS).unwrap();
+            let before = [GetPixel(dc, 10, 6).0, GetPixel(dc, 10, 13).0];
             draw(dc, 0, 0, icon);
-            let actual = GetPixel(dc, x, y).0;
+            let after = [GetPixel(dc, 10, 6).0, GetPixel(dc, 10, 13).0];
             SelectObject(dc, old);
             let _ = DeleteDC(dc);
             let _ = DeleteObject(surface.into());
-            actual
+            (before, after)
         };
-        assert_eq!(actual, expected);
+        // GDI can transform colors to match the active display profile.
+        assert_eq!(before, [0; 2]);
+        assert_ne!(after, before);
+        assert_ne!(after[0], after[1]);
     }
 }

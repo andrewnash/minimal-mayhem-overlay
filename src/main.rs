@@ -19,7 +19,7 @@ use windows::{
         UI::{
             HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext},
             Input::KeyboardAndMouse::{
-                MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, RegisterHotKey, VK_F8,
+                MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, RegisterHotKey, VK_F8, VK_M,
             },
             WindowsAndMessaging::*,
         },
@@ -32,6 +32,7 @@ const QUIT: i32 = 2;
 const DETAILS: i32 = 3;
 const TOGGLE_BUILDS: i32 = 4;
 const SHOW_BUILD: i32 = 5;
+const SCAN_ALTERNATE: i32 = 6;
 const BUILD_WIDTH: i32 = 446;
 const BUILD_HEIGHT: i32 = 144;
 const BADGE_HEIGHT: i32 = 34;
@@ -95,7 +96,26 @@ fn main() -> Result<()> {
     unsafe {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)?;
         let overlay = create_overlay()?;
-        RegisterHotKey(None, SCAN, MOD_NOREPEAT, VK_F8.0 as u32)?;
+        let primary_scan = RegisterHotKey(None, SCAN, MOD_NOREPEAT, VK_F8.0 as u32);
+        let alternate_scan = RegisterHotKey(
+            None,
+            SCAN_ALTERNATE,
+            MOD_NOREPEAT | MOD_CONTROL | MOD_ALT,
+            VK_M.0 as u32,
+        );
+        match (primary_scan, alternate_scan) {
+            (Err(primary), Err(alternate)) => {
+                eprintln!("F8 scan is unavailable: {primary}");
+                return Err(alternate);
+            }
+            (Err(error), Ok(())) => {
+                eprintln!("F8 is unavailable ({error}). Use Ctrl+Alt+M to scan.")
+            }
+            (Ok(()), Err(error)) => {
+                eprintln!("Ctrl+Alt+M is unavailable ({error}). Use F8 to scan.")
+            }
+            (Ok(()), Ok(())) => {}
+        }
         RegisterHotKey(None, DETAILS, MOD_NOREPEAT | MOD_SHIFT, VK_F8.0 as u32)?;
         RegisterHotKey(None, SHOW_BUILD, MOD_NOREPEAT | MOD_ALT, VK_F8.0 as u32)?;
         RegisterHotKey(
@@ -111,7 +131,7 @@ fn main() -> Result<()> {
             VK_F8.0 as u32,
         )?;
         println!(
-            "Minimal Mayhem Overlay | patch {} | F8 scan | Shift+F8 details | Alt+F8 build | Ctrl+F8 toggle builds | Ctrl+Shift+F8 quit",
+            "Minimal Mayhem Overlay | patch {} | F8 or Ctrl+Alt+M scan | Shift+F8 details | Alt+F8 build | Ctrl+F8 toggle builds | Ctrl+Shift+F8 quit",
             data.patch
         );
 
@@ -175,29 +195,35 @@ fn main() -> Result<()> {
                     displayed = Some((game, Instant::now()));
                     SetTimer(Some(overlay), 1, 200, None);
                 }
-                WM_HOTKEY if matches!(message.wParam.0 as i32, SCAN | DETAILS) => {
+                WM_HOTKEY if matches!(message.wParam.0 as i32, SCAN | SCAN_ALTERNATE | DETAILS) => {
                     hide(overlay, &mut displayed);
                     let Some(game) = foreground_game() else {
+                        eprintln!("Scan skipped: focus the League game window first.");
                         continue;
                     };
                     BUILD_VIEW.set(false);
-                    let area = game_area(game)?;
+                    let area = match game_area(game) {
+                        Ok(area) => area,
+                        Err(error) => {
+                            eprintln!("Could not locate the League game area: {error}");
+                            continue;
+                        }
+                    };
+                    let width = area.right - area.left;
+                    let height = area.bottom - area.top;
+                    println!("Scanning augment cards in the {width}x{height} game window.");
                     match scan::scan(&engine, &tiers, area) {
                         Ok(cards) if GetForegroundWindow() == game => {
+                            let recognized = cards.iter().flatten().count();
+                            println!("Recognized {recognized}/3 augment titles.");
                             let champion = champion_override.as_deref().or_else(|| {
-                                cards
-                                    .iter()
-                                    .any(Option::is_some)
-                                    .then(|| live::champion(&data))
-                                    .flatten()
+                                (recognized > 0).then(|| live::champion(&data)).flatten()
                             });
                             if GetForegroundWindow() != game {
                                 continue;
                             }
                             let champion_picks = champion
                                 .and_then(|name| tiers::ChampionPicks::load(&data.patch, name));
-                            let width = area.right - area.left;
-                            let height = area.bottom - area.top;
                             let centers = scan::card_centers(width, height);
                             let details = message.wParam.0 == DETAILS as usize;
                             HEADER.replace(details.then(|| {
