@@ -1,8 +1,12 @@
+// No console window: the app lives in the notification area and logs to a file.
+#![windows_subsystem = "windows"]
+
 mod builds;
 mod icons;
 mod live;
 mod scan;
 mod tiers;
+mod tray;
 
 use std::{
     cell::{Cell, RefCell},
@@ -19,8 +23,9 @@ use windows::{
         UI::{
             HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext},
             Input::KeyboardAndMouse::{
-                GetAsyncKeyState, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, RegisterHotKey,
-                VIRTUAL_KEY, VK_CONTROL, VK_F8, VK_M, VK_MENU, VK_SHIFT,
+                GetAsyncKeyState, HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT,
+                RegisterHotKey, UnregisterHotKey, VIRTUAL_KEY, VK_CONTROL, VK_F8, VK_M, VK_MENU,
+                VK_SHIFT,
             },
             WindowsAndMessaging::*,
         },
@@ -36,6 +41,9 @@ const SHOW_BUILD: i32 = 5;
 /// Not a hotkey: the timer found the augment offer on screen.
 const AUTO: i32 = 6;
 const AUTO_POLL: Duration = Duration::from_millis(1000);
+/// Key polling while League is focused, and the slow check for League otherwise.
+const ACTIVE_TICK: u32 = 25;
+const IDLE_TICK: u32 = 1000;
 const CHAMPION_RETRY: Duration = Duration::from_secs(5);
 /// Minimum time between saved scan samples, and the most sample files kept on disk.
 const SAMPLE_GAP: Duration = Duration::from_secs(2);
@@ -84,12 +92,34 @@ impl BuildLine {
     }
 }
 
-fn main() -> Result<()> {
+fn main() {
+    let check_ocr = std::env::args().nth(1).as_deref() == Some("--check-ocr");
+    if check_ocr {
+        tray::use_parent_console();
+    } else {
+        tray::redirect_logs();
+        if tray::already_running() {
+            return;
+        }
+    }
+    if let Err(error) = run(check_ocr) {
+        eprintln!("Minimal Mayhem Overlay stopped: {error}");
+        if !check_ocr {
+            tray::alert(&format!("Minimal Mayhem Overlay stopped: {error}"));
+        }
+    }
+}
+
+fn run(check_ocr: bool) -> Result<()> {
     unsafe { RoInitialize(RO_INIT_MULTITHREADED)? };
     let engine = scan::english_ocr().inspect_err(|_| {
-        eprintln!("Windows English OCR could not start. Check the en-US OCR language capability.");
+        let text = "Windows English OCR could not start. Add English (United States) in Settings > Time & language > Language & region.";
+        eprintln!("{text}");
+        if !check_ocr {
+            tray::alert(text);
+        }
     })?;
-    if std::env::args().nth(1).as_deref() == Some("--check-ocr") {
+    if check_ocr {
         println!(
             "Windows OCR ready ({})",
             engine.RecognizerLanguage()?.LanguageTag()?
@@ -106,24 +136,23 @@ fn main() -> Result<()> {
     unsafe {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)?;
         let overlay = create_overlay()?;
-        let scan_timer = SetTimer(None, 0, 25, None);
+        let mut scan_timer = SetTimer(None, 0, IDLE_TICK, None);
         if scan_timer == 0 {
             return Err(windows::core::Error::from_thread());
         }
-        RegisterHotKey(None, DETAILS, MOD_NOREPEAT | MOD_SHIFT, VK_F8.0 as u32)?;
-        RegisterHotKey(None, SHOW_BUILD, MOD_NOREPEAT | MOD_ALT, VK_F8.0 as u32)?;
-        RegisterHotKey(
-            None,
-            TOGGLE_BUILDS,
-            MOD_NOREPEAT | MOD_CONTROL,
-            VK_F8.0 as u32,
-        )?;
-        RegisterHotKey(
-            None,
-            QUIT,
-            MOD_NOREPEAT | MOD_CONTROL | MOD_SHIFT,
-            VK_F8.0 as u32,
-        )?;
+        let mut active = false;
+        // Kept alive until `run` returns; dropping it removes the tray icon.
+        let tray = tray::Tray::new(&format!("Minimal Mayhem Overlay  ·  patch {}", data.patch))
+            .inspect_err(|error| eprintln!("No tray icon: {error}"))
+            .ok();
+        if let Some(tray) = &tray
+            && !std::env::args().any(|arg| arg == tray::STARTUP_FLAG)
+        {
+            tray.notify(
+                "Running in the background",
+                "Badges appear on their own when an ARAM Mayhem augment offer opens. Right-click the tray icon to quit or start with Windows.",
+            );
+        }
         println!(
             "Minimal Mayhem Overlay | patch {} | augment offers detected automatically | F8 or Ctrl+Shift+M rescan | Shift+F8 details | Alt+F8 refresh build | Ctrl+F8 toggle builds | Ctrl+Shift+F8 quit",
             data.patch
@@ -155,7 +184,16 @@ fn main() -> Result<()> {
                 && message.hwnd.0.is_null()
                 && message.wParam.0 == scan_timer
             {
-                let Some(game) = foreground_game() else {
+                let game = foreground_game();
+                if game.is_some() != active {
+                    // Poll keys and own the F8 shortcuts only while League is focused.
+                    active = game.is_some();
+                    set_hotkeys(active);
+                    let _ = KillTimer(None, scan_timer);
+                    scan_timer =
+                        SetTimer(None, 0, if active { ACTIVE_TICK } else { IDLE_TICK }, None);
+                }
+                let Some(game) = game else {
                     scan_held = false;
                     if build_shown {
                         let _ = ShowWindow(build_overlay, SW_HIDE);
@@ -387,6 +425,28 @@ fn main() -> Result<()> {
     }
 }
 
+fn set_hotkeys(on: bool) {
+    let keys: [(i32, HOT_KEY_MODIFIERS); 4] = [
+        (DETAILS, MOD_SHIFT),
+        (SHOW_BUILD, MOD_ALT),
+        (TOGGLE_BUILDS, MOD_CONTROL),
+        (QUIT, MOD_CONTROL | MOD_SHIFT),
+    ];
+    for (id, modifiers) in keys {
+        unsafe {
+            if on {
+                if let Err(error) =
+                    RegisterHotKey(None, id, MOD_NOREPEAT | modifiers, VK_F8.0 as u32)
+                {
+                    eprintln!("Shortcut {id} is taken by another app: {error}");
+                }
+            } else {
+                let _ = UnregisterHotKey(None, id);
+            }
+        }
+    }
+}
+
 fn key_down(key: VIRTUAL_KEY) -> bool {
     unsafe { GetAsyncKeyState(i32::from(key.0)) < 0 }
 }
@@ -433,12 +493,9 @@ fn foreground_game() -> Option<HWND> {
 /// Logs what OCR read and keeps the card crops under %LOCALAPPDATA%\MinimalMayhemOverlay\samples
 /// so misreads from real games can be inspected later.
 fn save_samples(samples: &[scan::Sample; 3], read: &str) {
-    let Some(base) = std::env::var_os("LOCALAPPDATA") else {
+    let Some(dir) = tray::data_dir().map(|dir| dir.join("samples")) else {
         return;
     };
-    let dir = std::path::Path::new(&base)
-        .join("MinimalMayhemOverlay")
-        .join("samples");
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |time| time.as_millis());

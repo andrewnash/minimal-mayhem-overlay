@@ -1,12 +1,12 @@
 # Minimal Mayhem Overlay
 
-A native Rust overlay for ARAM Mayhem on Windows. Press **F8** while an augment
-offer is visible to read its three title regions once and display each card's
+A native Rust overlay for ARAM Mayhem on Windows. It runs quietly in the
+notification area and, when an augment offer opens, reads the three card
+titles and displays each card's
 **S–D tier**, **overall pick rate**, **pick-rate rank within its rarity**, and
 the change since the previous published patch in percentage points (pp).
-Press **Ctrl+Shift+F8** to quit. The rounded badges sit near the bottom of each
-card, above the reroll controls. They are click-through and hide after six
-seconds or when League loses focus. Press F8 again after a reroll.
+The rounded badges sit inside the lower part of each card. They are
+click-through and hide when the offer closes or League loses focus.
 
 ## Previews
 
@@ -26,14 +26,26 @@ The current version builds from source on Windows with Rust and the Windows
 build tools. The app uses Windows' English OCR capability.
 
 1. Clone the repository and run `cargo build --release --locked`.
-2. Launch `target/release/minimal-mayhem-overlay.exe`.
+2. Run `powershell -ExecutionPolicy Bypass -File scripts/install.ps1`. It copies
+   the exe to `%LOCALAPPDATA%\Programs\Minimal Mayhem Overlay`, adds Desktop and
+   Start menu shortcuts, turns on **Start with Windows**, and starts the app.
+   No admin rights needed. Add `-NoStartup` to skip auto-start, or `-Uninstall`
+   to remove everything.
 3. Set League's window mode to **Borderless** and its text language to **English**.
-4. Open an ARAM Mayhem augment offer and press F8. A **?** means a card title
-   could not be matched confidently.
+4. Play ARAM Mayhem. Badges appear by themselves when an augment offer opens.
+   A **?** means a card title could not be matched confidently.
 
-**Ctrl+Shift+M** is a backup for **F8**. Both scan shortcuts run only when the
-League game is focused. The console reports when a scan starts and how many
-titles it read.
+The app has no window. It sits in the notification area (you may need to
+pin it from the **^** overflow). Right-click its icon to toggle **Start with
+Windows**, open the log folder, or quit. Outside a game it checks once a
+second whether League is focused and otherwise sleeps. It uses no measurable
+CPU and about 2 MB of private memory. The F8 shortcuts are only registered
+while League is focused, so other apps keep them the rest of the time.
+Launching it again while it runs just shows a notice. Output goes to
+`%LOCALAPPDATA%\MinimalMayhemOverlay\overlay.log`.
+
+**F8** (or **Ctrl+Shift+M**) rescans the cards by hand, for example after a
+reroll the overlay missed. **Ctrl+Shift+F8** quits.
 
 The overlay detects your champion from League's local Live Client Data API
 when you request a build or scan a readable offer. To override detection,
@@ -82,7 +94,10 @@ The generated file contains matched counts and excludes wins and win rates.
 
 The prototype assumes the default offer layout. It uses Windows' built-in en-US
 OCR. Run `minimal-mayhem-overlay.exe --check-ocr` to check that the OCR language is
-available. Screen crops are processed in memory. The app waits for Windows
+available (pipe it, as in `--check-ocr | Write-Output`, so the terminal waits
+for the result). To help debug misreads, each new offer's title crops and OCR
+text are saved under `%LOCALAPPDATA%\MinimalMayhemOverlay\samples`, capped at 600
+files. Delete that folder at any time. The app waits for Windows
 messages while idle. Champion detection reads League's loopback endpoint on
 demand. The overlay makes no internet requests. It captures the title regions
 with Win32 GDI, calls Windows OCR through the Rust `windows` crate, and matches
