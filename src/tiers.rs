@@ -87,6 +87,12 @@ fn normalize(text: &str) -> String {
 }
 
 impl Dataset {
+    pub fn is_weapon_of_destiny(&self, card: CardStats) -> bool {
+        self.augments
+            .get(card.augment_index)
+            .is_some_and(|augment| augment.id == "weapon_of_destiny")
+    }
+
     pub fn combo_hint(&self, champion: &str, card: CardStats) -> Option<&str> {
         let id = &self.augments.get(card.augment_index)?.id;
         self.combo_hints.get(champion)?.get(id).map(String::as_str)

@@ -72,7 +72,9 @@ When F8 recognizes **Weapon of Destiny**, the overlay can show up to two
 legendary items most often recorded first for the champion in AramHex's
 published sample. Record order comes from completed games. Press **Ctrl+F8**
 to toggle item pairings. They start enabled on every launch. Regenerate an
-older `champion-picks.json` to add the item records.
+older `champion-picks.json` to add the item records. Without that file, the
+card suggests the first core item from the bundled build, since Weapon of
+Destiny upgrades your first legendary item.
 
 [Champion data: AramHex](https://github.com/czgreat/aramhex-data)
 ([CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)).

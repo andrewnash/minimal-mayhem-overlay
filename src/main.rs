@@ -311,17 +311,24 @@ fn main() -> Result<()> {
                             BADGES.replace(std::array::from_fn(|i| Badge {
                                 center: centers[i],
                                 stats: cards[i],
-                                build_hint: champion_picks
-                                    .as_ref()
-                                    .filter(|_| !details)
-                                    .zip(cards[i])
-                                    .and_then(|(picks, card)| picks.weapon_items(&data, card))
-                                    .map(|items| {
-                                        let names: [&str; 2] = std::array::from_fn(|i| {
-                                            items.get(i).map_or("", String::as_str)
-                                        });
-                                        BuildLine::new(items.join(" / "), &names)
-                                    }),
+                                build_hint: cards[i].filter(|_| !details).and_then(|card| {
+                                    champion_picks
+                                        .as_ref()
+                                        .and_then(|picks| picks.weapon_items(&data, card))
+                                        .map(|items| {
+                                            let names: [&str; 2] = std::array::from_fn(|i| {
+                                                items.get(i).map_or("", String::as_str)
+                                            });
+                                            BuildLine::new(items.join(" / "), &names)
+                                        })
+                                        .or_else(|| {
+                                            data.is_weapon_of_destiny(card)
+                                                .then(|| {
+                                                    champion.and_then(|id| weapon_line(&data, id))
+                                                })
+                                                .flatten()
+                                        })
+                                }),
                                 champion_pick: champion_picks
                                     .as_ref()
                                     .zip(cards[i])
@@ -406,6 +413,14 @@ fn build_rows(data: &tiers::Dataset, id: &str) -> Option<[BuildLine; 5]> {
             &[],
         ),
     ])
+}
+
+/// Weapon of Destiny upgrades the first legendary item, so suggest the bundled build's first core
+/// item when no per-champion pick data is installed.
+fn weapon_line(data: &tiers::Dataset, id: &str) -> Option<BuildLine> {
+    let champion = data.champions.get(id)?;
+    let first = builds::for_champion(id, &champion.role)?.core[0];
+    Some(BuildLine::new(format!("Weapon: {first}"), &[first]))
 }
 
 fn foreground_game() -> Option<HWND> {
