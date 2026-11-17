@@ -203,6 +203,7 @@ fn main() -> Result<()> {
                         BUILD_HEIGHT,
                         SWP_NOACTIVATE | SWP_SHOWWINDOW,
                     )?;
+                    report_visibility(overlay);
                     let _ = InvalidateRect(Some(overlay), None, false);
                     displayed = Some((game, Instant::now()));
                     SetTimer(Some(overlay), 1, 200, None);
@@ -294,6 +295,7 @@ fn main() -> Result<()> {
                                 HEADER_HEIGHT + HINT_TOP + HINT_HEIGHT,
                                 SWP_NOACTIVATE | SWP_SHOWWINDOW,
                             )?;
+                            report_visibility(overlay);
                             let _ = InvalidateRect(Some(overlay), None, false);
                             displayed = Some((game, Instant::now()));
                             SetTimer(Some(overlay), 1, 200, None);
@@ -352,6 +354,16 @@ fn foreground_game() -> Option<HWND> {
     }
 }
 
+/// Logs when Windows has left the overlay out of the topmost band, which hides it behind League.
+unsafe fn report_visibility(overlay: HWND) {
+    let topmost = unsafe { GetWindowLongW(overlay, GWL_EXSTYLE) } as u32 & WS_EX_TOPMOST.0 != 0;
+    if topmost {
+        println!("Overlay shown above the game.");
+    } else {
+        eprintln!("Overlay is not topmost; Windows may be drawing it behind League.");
+    }
+}
+
 unsafe fn hide(overlay: HWND, displayed: &mut Option<(HWND, Instant)>) {
     if displayed.take().is_some() {
         unsafe {
@@ -389,7 +401,9 @@ unsafe fn create_overlay() -> Result<HWND> {
             return Err(windows::core::Error::from_thread());
         }
         let overlay = CreateWindowExW(
-            WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+            // Start in the topmost band: Windows can ignore a later HWND_TOPMOST
+            // request for a visible WS_EX_NOACTIVATE window, leaving it behind League.
+            WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
             class,
             w!("Minimal Mayhem Overlay"),
             WS_POPUP,
