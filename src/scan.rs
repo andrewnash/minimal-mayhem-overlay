@@ -7,6 +7,8 @@ use windows::{
     core::{HSTRING, Result},
 };
 
+use std::{fs, path::Path};
+
 use crate::tiers::{CardStats, Tiers};
 
 pub fn english_ocr() -> Result<OcrEngine> {
@@ -21,17 +23,83 @@ pub fn card_centers(width: i32, height: i32) -> [i32; 3] {
     [width / 2 - spacing, width / 2, width / 2 + spacing]
 }
 
-pub fn scan(engine: &OcrEngine, tiers: &Tiers, game: RECT) -> Result<[Option<CardStats>; 3]> {
+/// One card's title crop and what OCR read from it, kept so failed reads can be saved.
+#[derive(Default)]
+pub struct Sample {
+    pixels: Vec<u8>,
+    width: i32,
+    height: i32,
+    lines: Vec<String>,
+    matched: bool,
+}
+
+pub fn scan(
+    engine: &OcrEngine,
+    tiers: &Tiers,
+    game: RECT,
+) -> Result<([Option<CardStats>; 3], [Sample; 3])> {
     let mut cards = [None; 3];
-    for (index, card) in cards.iter_mut().enumerate() {
-        *card = read_card(engine, tiers, game, index)?;
+    let mut samples: [Sample; 3] = Default::default();
+    for index in 0..3 {
+        (cards[index], samples[index]) = read_card(engine, tiers, game, index)?;
     }
-    Ok(cards)
+    Ok((cards, samples))
 }
 
 /// Cheap check for the augment offer: OCR only the middle card's title region.
 pub fn cards_open(engine: &OcrEngine, tiers: &Tiers, game: RECT) -> bool {
-    matches!(read_card(engine, tiers, game, 1), Ok(Some(_)))
+    matches!(read_card(engine, tiers, game, 1), Ok((Some(_), _)))
+}
+
+/// Text OCR returned for every card, for the log and for spotting a changed offer.
+pub fn describe(samples: &[Sample; 3]) -> String {
+    samples
+        .iter()
+        .enumerate()
+        .map(|(index, sample)| {
+            format!(
+                "card {} {}: {:?}",
+                index + 1,
+                if sample.matched { "ok" } else { "MISS" },
+                sample.lines.join(" | ")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Writes each card's crop (BMP) and OCR text under `dir`, prefixed with `stamp`.
+pub fn save_samples(dir: &Path, stamp: &str, samples: &[Sample; 3]) -> std::io::Result<()> {
+    fs::create_dir_all(dir)?;
+    for (index, sample) in samples.iter().enumerate() {
+        let status = if sample.matched { "ok" } else { "miss" };
+        let base = dir.join(format!("{stamp}-card{}-{status}", index + 1));
+        fs::write(base.with_extension("txt"), sample.lines.join("\n"))?;
+        if !sample.pixels.is_empty() {
+            fs::write(
+                base.with_extension("bmp"),
+                bmp(&sample.pixels, sample.width, sample.height),
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// 32-bit top-down BMP from BGRA pixels.
+fn bmp(pixels: &[u8], width: i32, height: i32) -> Vec<u8> {
+    let mut file = Vec::with_capacity(54 + pixels.len());
+    file.extend_from_slice(b"BM");
+    file.extend_from_slice(&(54 + pixels.len() as u32).to_le_bytes());
+    file.extend_from_slice(&0u32.to_le_bytes());
+    file.extend_from_slice(&54u32.to_le_bytes());
+    file.extend_from_slice(&40u32.to_le_bytes());
+    file.extend_from_slice(&width.to_le_bytes());
+    file.extend_from_slice(&(-height).to_le_bytes());
+    file.extend_from_slice(&1u16.to_le_bytes());
+    file.extend_from_slice(&32u16.to_le_bytes());
+    file.extend_from_slice(&[0; 24]);
+    file.extend_from_slice(pixels);
+    file
 }
 
 fn read_card(
@@ -39,7 +107,7 @@ fn read_card(
     tiers: &Tiers,
     game: RECT,
     index: usize,
-) -> Result<Option<CardStats>> {
+) -> Result<(Option<CardStats>, Sample)> {
     let width = game.right - game.left;
     let height = game.bottom - game.top;
     let centers = card_centers(width, height);
@@ -49,7 +117,7 @@ fn read_card(
     let top = game.top + height * 33 / 100;
     let left = game.left + centers[index] - crop_width / 2;
     let Some(pixels) = capture(left, top, crop_width, crop_height) else {
-        return Ok(None);
+        return Ok((None, Sample::default()));
     };
     let writer = DataWriter::new()?;
     writer.WriteBytes(&pixels)?;
@@ -63,6 +131,7 @@ fn read_card(
     )?;
     let result = engine.RecognizeAsync(&bitmap)?.join()?;
     let mut best = None;
+    let mut lines = Vec::new();
     for line in result.Lines()? {
         let text = line.Text()?.to_string_lossy();
         if let Some((stats, confidence)) = tiers.recognize(&text)
@@ -70,8 +139,17 @@ fn read_card(
         {
             best = Some((stats, confidence));
         }
+        lines.push(text);
     }
-    Ok(best.map(|(stats, _)| stats))
+    let stats = best.map(|(stats, _)| stats);
+    let sample = Sample {
+        pixels,
+        width: crop_width,
+        height: crop_height,
+        lines,
+        matched: stats.is_some(),
+    };
+    Ok((stats, sample))
 }
 
 fn capture(x: i32, y: i32, width: i32, height: i32) -> Option<Vec<u8>> {

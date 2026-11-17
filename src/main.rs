@@ -37,6 +37,9 @@ const SHOW_BUILD: i32 = 5;
 const AUTO: i32 = 6;
 const AUTO_POLL: Duration = Duration::from_millis(1000);
 const CHAMPION_RETRY: Duration = Duration::from_secs(5);
+/// Minimum time between saved scan samples, and the most sample files kept on disk.
+const SAMPLE_GAP: Duration = Duration::from_secs(2);
+const MAX_SAMPLE_FILES: usize = 600;
 /// Below League's top-right score and timer readout.
 const BUILD_TOP: i32 = 80;
 const BUILD_WIDTH: i32 = 446;
@@ -138,6 +141,8 @@ fn main() -> Result<()> {
         let mut build_game = None;
         let mut champion: Option<&str> = None;
         let mut champion_checked: Option<Instant> = None;
+        let mut last_sample = String::new();
+        let mut last_saved: Option<Instant> = None;
         loop {
             match GetMessageW(&mut message, None, 0, 0).0 {
                 -1 => return Err(windows::core::Error::from_thread()),
@@ -258,8 +263,16 @@ fn main() -> Result<()> {
                         println!("Scanning augment cards in the {width}x{height} game window.");
                     }
                     match scan::scan(&engine, &tiers, area) {
-                        Ok(cards) if GetForegroundWindow() == game => {
+                        Ok((cards, samples)) if GetForegroundWindow() == game => {
                             let recognized = cards.iter().flatten().count();
+                            let read = scan::describe(&samples);
+                            if (!auto || (recognized > 0 && read != last_sample))
+                                && last_saved.is_none_or(|at| at.elapsed() >= SAMPLE_GAP)
+                            {
+                                save_samples(&samples, &read);
+                                last_saved = Some(Instant::now());
+                                last_sample = read;
+                            }
                             if auto {
                                 if recognized == 0 {
                                     continue;
@@ -399,6 +412,27 @@ fn foreground_game() -> Option<HWND> {
     unsafe {
         let game = FindWindowW(w!("RiotWindowClass"), w!("League of Legends (TM) Client")).ok()?;
         (GetForegroundWindow() == game).then_some(game)
+    }
+}
+
+/// Logs what OCR read and keeps the card crops under %LOCALAPPDATA%\MinimalMayhemOverlay\samples
+/// so misreads from real games can be inspected later.
+fn save_samples(samples: &[scan::Sample; 3], read: &str) {
+    let Some(base) = std::env::var_os("LOCALAPPDATA") else {
+        return;
+    };
+    let dir = std::path::Path::new(&base)
+        .join("MinimalMayhemOverlay")
+        .join("samples");
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |time| time.as_millis());
+    println!("Sample {stamp}:\n{read}");
+    let full = std::fs::read_dir(&dir).is_ok_and(|entries| entries.count() >= MAX_SAMPLE_FILES);
+    if full {
+        println!("Sample folder is full; delete old samples to keep saving crops.");
+    } else if let Err(error) = scan::save_samples(&dir, &stamp.to_string(), samples) {
+        eprintln!("Could not save scan samples: {error}");
     }
 }
 
