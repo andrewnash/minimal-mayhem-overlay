@@ -31,8 +31,9 @@ build tools. The app uses Windows' English OCR capability.
 4. Open an ARAM Mayhem augment offer and press F8. A **?** means a card title
    could not be matched confidently.
 
-The console lists the scan shortcuts Windows registered, including a backup
-when one is available. It also reports when a scan starts and how many titles it read.
+**Ctrl+Shift+M** is a backup for **F8**. Both scan shortcuts run only when the
+League game is focused. The console reports when a scan starts and how many
+titles it read.
 
 The overlay detects your champion from League's local Live Client Data API
 when you request a build or scan a readable offer. To override detection,

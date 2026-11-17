@@ -19,7 +19,8 @@ use windows::{
         UI::{
             HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext},
             Input::KeyboardAndMouse::{
-                MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, RegisterHotKey, VK_F8, VK_J, VK_M,
+                GetAsyncKeyState, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, RegisterHotKey,
+                VIRTUAL_KEY, VK_CONTROL, VK_F8, VK_M, VK_MENU, VK_SHIFT,
             },
             WindowsAndMessaging::*,
         },
@@ -32,7 +33,6 @@ const QUIT: i32 = 2;
 const DETAILS: i32 = 3;
 const TOGGLE_BUILDS: i32 = 4;
 const SHOW_BUILD: i32 = 5;
-const SCAN_ALTERNATE: i32 = 6;
 const BUILD_WIDTH: i32 = 446;
 const BUILD_HEIGHT: i32 = 144;
 const BADGE_HEIGHT: i32 = 34;
@@ -96,32 +96,10 @@ fn main() -> Result<()> {
     unsafe {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)?;
         let overlay = create_overlay()?;
-        let primary_scan = RegisterHotKey(None, SCAN, MOD_NOREPEAT, VK_F8.0 as u32);
-        let alternate_scan = [
-            ("Ctrl+Alt+M", MOD_ALT, VK_M),
-            ("Ctrl+Shift+M", MOD_SHIFT, VK_M),
-            ("Ctrl+Alt+J", MOD_ALT, VK_J),
-        ]
-        .into_iter()
-        .find_map(|(label, modifier, key)| {
-            RegisterHotKey(
-                None,
-                SCAN_ALTERNATE,
-                MOD_NOREPEAT | MOD_CONTROL | modifier,
-                key.0 as u32,
-            )
-            .ok()
-            .map(|()| label)
-        });
-        let scan_keys = match (primary_scan, alternate_scan) {
-            (Ok(()), Some(label)) => format!("F8 or {label}"),
-            (Ok(()), None) => "F8".into(),
-            (Err(_), Some(label)) => label.into(),
-            (Err(error), None) => {
-                eprintln!("None of the scan shortcuts could be registered.");
-                return Err(error);
-            }
-        };
+        let scan_timer = SetTimer(None, 0, 25, None);
+        if scan_timer == 0 {
+            return Err(windows::core::Error::from_thread());
+        }
         RegisterHotKey(None, DETAILS, MOD_NOREPEAT | MOD_SHIFT, VK_F8.0 as u32)?;
         RegisterHotKey(None, SHOW_BUILD, MOD_NOREPEAT | MOD_ALT, VK_F8.0 as u32)?;
         RegisterHotKey(
@@ -137,18 +115,46 @@ fn main() -> Result<()> {
             VK_F8.0 as u32,
         )?;
         println!(
-            "Minimal Mayhem Overlay | patch {} | {scan_keys} scan | Shift+F8 details | Alt+F8 build | Ctrl+F8 toggle builds | Ctrl+Shift+F8 quit",
+            "Minimal Mayhem Overlay | patch {} | F8 or Ctrl+Shift+M scan | Shift+F8 details | Alt+F8 build | Ctrl+F8 toggle builds | Ctrl+Shift+F8 quit",
             data.patch
         );
 
         let mut displayed = None;
         let mut message = MSG::default();
+        let mut scan_held = false;
         loop {
             match GetMessageW(&mut message, None, 0, 0).0 {
                 -1 => return Err(windows::core::Error::from_thread()),
                 0 => return Ok(()),
                 _ => {}
             }
+            let action = if message.message == WM_HOTKEY {
+                message.wParam.0 as i32
+            } else if message.message == WM_TIMER
+                && message.hwnd.0.is_null()
+                && message.wParam.0 == scan_timer
+            {
+                if foreground_game().is_none() {
+                    scan_held = false;
+                    continue;
+                }
+                let ctrl = key_down(VK_CONTROL);
+                let shift = key_down(VK_SHIFT);
+                let held = !key_down(VK_MENU)
+                    && if ctrl || shift {
+                        ctrl && shift && key_down(VK_M)
+                    } else {
+                        key_down(VK_F8)
+                    };
+                let pressed = held && !scan_held;
+                scan_held = held;
+                if !pressed {
+                    continue;
+                }
+                SCAN
+            } else {
+                0
+            };
             match message.message {
                 WM_HOTKEY if message.wParam.0 == QUIT as usize => return Ok(()),
                 WM_HOTKEY if message.wParam.0 == TOGGLE_BUILDS as usize => {
@@ -201,7 +207,7 @@ fn main() -> Result<()> {
                     displayed = Some((game, Instant::now()));
                     SetTimer(Some(overlay), 1, 200, None);
                 }
-                WM_HOTKEY if matches!(message.wParam.0 as i32, SCAN | SCAN_ALTERNATE | DETAILS) => {
+                _ if matches!(action, SCAN | DETAILS) => {
                     hide(overlay, &mut displayed);
                     let Some(game) = foreground_game() else {
                         eprintln!("Scan skipped: focus the League game window first.");
@@ -231,7 +237,7 @@ fn main() -> Result<()> {
                             let champion_picks = champion
                                 .and_then(|name| tiers::ChampionPicks::load(&data.patch, name));
                             let centers = scan::card_centers(width, height);
-                            let details = message.wParam.0 == DETAILS as usize;
+                            let details = action == DETAILS;
                             HEADER.replace(details.then(|| {
                                 let mut label = format!("Patch {}", data.patch);
                                 if let Some(date) = &data.stats_date {
@@ -309,6 +315,10 @@ fn main() -> Result<()> {
             }
         }
     }
+}
+
+fn key_down(key: VIRTUAL_KEY) -> bool {
+    unsafe { GetAsyncKeyState(i32::from(key.0)) < 0 }
 }
 
 fn build_rows(data: &tiers::Dataset, id: &str) -> Option<[BuildLine; 5]> {
