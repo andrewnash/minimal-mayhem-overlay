@@ -33,6 +33,12 @@ const QUIT: i32 = 2;
 const DETAILS: i32 = 3;
 const TOGGLE_BUILDS: i32 = 4;
 const SHOW_BUILD: i32 = 5;
+/// Not a hotkey: the timer found the augment offer on screen.
+const AUTO: i32 = 6;
+const AUTO_POLL: Duration = Duration::from_millis(1000);
+const CHAMPION_RETRY: Duration = Duration::from_secs(5);
+/// Below League's top-right score and timer readout.
+const BUILD_TOP: i32 = 80;
 const BUILD_WIDTH: i32 = 446;
 const BUILD_HEIGHT: i32 = 144;
 const BADGE_HEIGHT: i32 = 34;
@@ -47,7 +53,7 @@ thread_local! {
     static BADGES: RefCell<[Badge; 3]> = RefCell::default();
     static HEADER: RefCell<Option<Vec<u16>>> = const { RefCell::new(None) };
     static SHOW_BUILDS: Cell<bool> = const { Cell::new(true) };
-    static BUILD_VIEW: Cell<bool> = const { Cell::new(false) };
+    static BUILD_HWND: Cell<Option<HWND>> = const { Cell::new(None) };
     static BUILD_ROWS: RefCell<Option<[BuildLine; 5]>> = const { RefCell::new(None) };
 }
 
@@ -115,13 +121,22 @@ fn main() -> Result<()> {
             VK_F8.0 as u32,
         )?;
         println!(
-            "Minimal Mayhem Overlay | patch {} | F8 or Ctrl+Shift+M scan | Shift+F8 details | Alt+F8 build | Ctrl+F8 toggle builds | Ctrl+Shift+F8 quit",
+            "Minimal Mayhem Overlay | patch {} | augment offers detected automatically | F8 or Ctrl+Shift+M rescan | Shift+F8 details | Alt+F8 refresh build | Ctrl+F8 toggle builds | Ctrl+Shift+F8 quit",
             data.patch
         );
 
+        let build_overlay = create_overlay()?;
+        BUILD_HWND.set(Some(build_overlay));
         let mut displayed = None;
         let mut message = MSG::default();
         let mut scan_held = false;
+        let mut auto_shown = false;
+        let mut misses = 0u8;
+        let mut last_poll = Instant::now();
+        let mut build_shown = false;
+        let mut build_game = None;
+        let mut champion: Option<&str> = None;
+        let mut champion_checked: Option<Instant> = None;
         loop {
             match GetMessageW(&mut message, None, 0, 0).0 {
                 -1 => return Err(windows::core::Error::from_thread()),
@@ -134,9 +149,32 @@ fn main() -> Result<()> {
                 && message.hwnd.0.is_null()
                 && message.wParam.0 == scan_timer
             {
-                if foreground_game().is_none() {
+                let Some(game) = foreground_game() else {
                     scan_held = false;
+                    if build_shown {
+                        let _ = ShowWindow(build_overlay, SW_HIDE);
+                        build_shown = false;
+                    }
                     continue;
+                };
+                if build_game != Some(game) {
+                    build_game = Some(game);
+                    champion = None;
+                    champion_checked = None;
+                }
+                if champion.is_none()
+                    && champion_checked.is_none_or(|at| at.elapsed() >= CHAMPION_RETRY)
+                {
+                    champion_checked = Some(Instant::now());
+                    champion = champion_override
+                        .as_deref()
+                        .or_else(|| live::champion(&data));
+                }
+                if SHOW_BUILDS.get()
+                    && !build_shown
+                    && let Some(rows) = champion.and_then(|id| build_rows(&data, id))
+                {
+                    build_shown = show_build(build_overlay, game, rows)?;
                 }
                 let ctrl = key_down(VK_CONTROL);
                 let shift = key_down(VK_SHIFT);
@@ -148,10 +186,29 @@ fn main() -> Result<()> {
                     };
                 let pressed = held && !scan_held;
                 scan_held = held;
-                if !pressed {
+                if pressed {
+                    SCAN
+                } else if last_poll.elapsed() >= AUTO_POLL {
+                    last_poll = Instant::now();
+                    let Ok(area) = game_area(game) else {
+                        continue;
+                    };
+                    if scan::cards_open(&engine, &tiers, area) {
+                        misses = 0;
+                        AUTO
+                    } else {
+                        if auto_shown {
+                            misses += 1;
+                            if misses >= 2 {
+                                hide(overlay, &mut displayed);
+                                auto_shown = false;
+                            }
+                        }
+                        continue;
+                    }
+                } else {
                     continue;
                 }
-                SCAN
             } else {
                 0
             };
@@ -160,61 +217,33 @@ fn main() -> Result<()> {
                 WM_HOTKEY if message.wParam.0 == TOGGLE_BUILDS as usize => {
                     let show = !SHOW_BUILDS.get();
                     SHOW_BUILDS.set(show);
-                    if !show && BUILD_VIEW.get() {
-                        hide(overlay, &mut displayed);
-                    } else {
-                        let _ = InvalidateRect(Some(overlay), None, false);
+                    if !show && build_shown {
+                        let _ = ShowWindow(build_overlay, SW_HIDE);
+                        build_shown = false;
                     }
+                    let _ = InvalidateRect(Some(overlay), None, false);
                     println!("Build options {}", if show { "on" } else { "off" });
                 }
                 WM_HOTKEY if message.wParam.0 == SHOW_BUILD as usize => {
-                    if !SHOW_BUILDS.get() {
-                        continue;
+                    // Re-detect the champion; the timer shows the panel again once found.
+                    champion = None;
+                    champion_checked = None;
+                    if build_shown {
+                        let _ = ShowWindow(build_overlay, SW_HIDE);
+                        build_shown = false;
                     }
-                    let Some(game) = foreground_game() else {
-                        continue;
-                    };
-                    let champion = champion_override
-                        .as_deref()
-                        .or_else(|| live::champion(&data));
-                    let Some(rows) = champion.and_then(|id| build_rows(&data, id)) else {
-                        println!(
-                            "Champion unavailable. Try again in game or launch with --champion <Riot champion key>."
-                        );
-                        continue;
-                    };
-                    if GetForegroundWindow() != game {
-                        continue;
-                    }
-                    let area = game_area(game)?;
-                    let width = BUILD_WIDTH.min(area.right - area.left - 32);
-                    if width <= 0 || area.bottom - area.top < BUILD_HEIGHT + 32 {
-                        continue;
-                    }
-                    hide(overlay, &mut displayed);
-                    BUILD_ROWS.replace(Some(rows));
-                    BUILD_VIEW.set(true);
-                    SetWindowPos(
-                        overlay,
-                        Some(HWND_TOPMOST),
-                        area.right - width - 16,
-                        area.top + 16,
-                        width,
-                        BUILD_HEIGHT,
-                        SWP_NOACTIVATE | SWP_SHOWWINDOW,
-                    )?;
-                    report_visibility(overlay);
-                    let _ = InvalidateRect(Some(overlay), None, false);
-                    displayed = Some((game, Instant::now()));
-                    SetTimer(Some(overlay), 1, 200, None);
+                    println!("Refreshing champion for the build panel.");
                 }
-                _ if matches!(action, SCAN | DETAILS) => {
-                    hide(overlay, &mut displayed);
+                _ if matches!(action, SCAN | DETAILS | AUTO) => {
+                    let auto = action == AUTO;
+                    if !auto {
+                        hide(overlay, &mut displayed);
+                        auto_shown = false;
+                    }
                     let Some(game) = foreground_game() else {
                         eprintln!("Scan skipped: focus the League game window first.");
                         continue;
                     };
-                    BUILD_VIEW.set(false);
                     let area = match game_area(game) {
                         Ok(area) => area,
                         Err(error) => {
@@ -224,12 +253,26 @@ fn main() -> Result<()> {
                     };
                     let width = area.right - area.left;
                     let height = area.bottom - area.top;
-                    println!("Scanning augment cards in the {width}x{height} game window.");
+                    if !auto {
+                        println!("Scanning augment cards in the {width}x{height} game window.");
+                    }
                     match scan::scan(&engine, &tiers, area) {
                         Ok(cards) if GetForegroundWindow() == game => {
                             let recognized = cards.iter().flatten().count();
-                            println!("Recognized {recognized}/3 augment titles.");
-                            let champion = champion_override.as_deref().or_else(|| {
+                            if auto {
+                                if recognized == 0 {
+                                    continue;
+                                }
+                                if !auto_shown {
+                                    println!(
+                                        "Augment offer detected: recognized {recognized}/3 titles."
+                                    );
+                                }
+                                auto_shown = true;
+                            } else {
+                                println!("Recognized {recognized}/3 augment titles.");
+                            }
+                            let champion = champion.or_else(|| {
                                 (recognized > 0).then(|| live::champion(&data)).flatten()
                             });
                             if GetForegroundWindow() != game {
@@ -361,11 +404,34 @@ fn foreground_game() -> Option<HWND> {
 /// Logs when Windows has left the overlay out of the topmost band, which hides it behind League.
 unsafe fn report_visibility(overlay: HWND) {
     let topmost = unsafe { GetWindowLongW(overlay, GWL_EXSTYLE) } as u32 & WS_EX_TOPMOST.0 != 0;
-    if topmost {
-        println!("Overlay shown above the game.");
-    } else {
+    if !topmost {
         eprintln!("Overlay is not topmost; Windows may be drawing it behind League.");
     }
+}
+
+/// Pins the item-build panel to the game's top-right corner. Returns whether it is showing.
+unsafe fn show_build(build_overlay: HWND, game: HWND, rows: [BuildLine; 5]) -> Result<bool> {
+    let area = unsafe { game_area(game)? };
+    let width = BUILD_WIDTH.min(area.right - area.left - 32);
+    if width <= 0 || area.bottom - area.top < BUILD_TOP + BUILD_HEIGHT + 32 {
+        return Ok(false);
+    }
+    BUILD_ROWS.replace(Some(rows));
+    unsafe {
+        SetWindowPos(
+            build_overlay,
+            Some(HWND_TOPMOST),
+            area.right - width - 16,
+            area.top + BUILD_TOP,
+            width,
+            BUILD_HEIGHT,
+            SWP_NOACTIVATE | SWP_SHOWWINDOW,
+        )?;
+        report_visibility(build_overlay);
+        let _ = InvalidateRect(Some(build_overlay), None, false);
+    }
+    println!("Build panel shown.");
+    Ok(true)
 }
 
 unsafe fn hide(overlay: HWND, displayed: &mut Option<(HWND, Instant)>) {
@@ -401,7 +467,8 @@ unsafe fn create_overlay() -> Result<HWND> {
             lpszClassName: class,
             ..Default::default()
         };
-        if RegisterClassW(&descriptor) == 0 {
+        // Both overlay windows share one class.
+        if RegisterClassW(&descriptor) == 0 && GetLastError() != ERROR_CLASS_ALREADY_EXISTS {
             return Err(windows::core::Error::from_thread());
         }
         let overlay = CreateWindowExW(
@@ -456,7 +523,7 @@ unsafe extern "system" fn window_proc(
             w!("Segoe UI"),
         );
         let previous = SelectObject(dc, font.into());
-        if BUILD_VIEW.get() {
+        if BUILD_HWND.get() == Some(hwnd) {
             let mut area = RECT::default();
             if GetClientRect(hwnd, &mut area).is_ok() {
                 BUILD_ROWS.with_borrow_mut(|rows| {
