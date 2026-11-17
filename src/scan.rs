@@ -14,8 +14,10 @@ pub fn english_ocr() -> Result<OcrEngine> {
     OcrEngine::TryCreateFromLanguage(&english)
 }
 
+/// Measured on a live 3840x1440 offer (HUD GlobalScale 0.25): cards sit 490 px apart,
+/// 424 px wide, spanning about 18%-66% of the window height.
 pub fn card_centers(width: i32, height: i32) -> [i32; 3] {
-    let spacing = (height * 44 / 100).min(width / 3);
+    let spacing = (height * 34 / 100).min(width / 3);
     [width / 2 - spacing, width / 2, width / 2 + spacing]
 }
 
@@ -41,7 +43,8 @@ fn read_card(
     let width = game.right - game.left;
     let height = game.bottom - game.top;
     let centers = card_centers(width, height);
-    let crop_width = (centers[1] - centers[0]) * 94 / 100;
+    // Stay inside one card so neighbouring titles never leak into the read.
+    let crop_width = (height * 28 / 100).min((centers[1] - centers[0]) * 94 / 100);
     let crop_height = height * 19 / 100;
     let top = game.top + height * 33 / 100;
     let left = game.left + centers[index] - crop_width / 2;

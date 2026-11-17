@@ -46,7 +46,8 @@ const HINT_HEIGHT: i32 = 24;
 const HINT_TOP: i32 = BADGE_HEIGHT + 3;
 const CHAMPION_TOP: i32 = HINT_HEIGHT + 3;
 const HEADER_HEIGHT: i32 = CHAMPION_TOP + HINT_HEIGHT + 3;
-const BADGE_CENTER_Y_PERCENT: i32 = 71;
+/// Inside each card's empty lower area, clear of the text and the reroll tabs below the cards.
+const BADGE_CENTER_Y_PERCENT: i32 = 60;
 const COLOR_KEY: COLORREF = COLORREF(0x00ff00ff);
 
 thread_local! {
