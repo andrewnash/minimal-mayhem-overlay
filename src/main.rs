@@ -239,14 +239,18 @@ fn main() -> Result<()> {
                                 .and_then(|name| tiers::ChampionPicks::load(&data.patch, name));
                             let centers = scan::card_centers(width, height);
                             let details = action == DETAILS;
-                            HEADER.replace(details.then(|| {
-                                let mut label = format!("Patch {}", data.patch);
-                                if let Some(date) = &data.stats_date {
-                                    label.push_str("  ·  Stats ");
-                                    label.push_str(date);
-                                }
-                                label.encode_utf16().collect()
-                            }));
+                            HEADER.replace(if recognized == 0 {
+                                Some("No augment cards found".encode_utf16().collect())
+                            } else {
+                                details.then(|| {
+                                    let mut label = format!("Patch {}", data.patch);
+                                    if let Some(date) = &data.stats_date {
+                                        label.push_str("  ·  Stats ");
+                                        label.push_str(date);
+                                    }
+                                    label.encode_utf16().collect()
+                                })
+                            });
                             BADGES.replace(std::array::from_fn(|i| Badge {
                                 center: centers[i],
                                 stats: cards[i],
