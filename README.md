@@ -1,8 +1,8 @@
 # Minimal Mayhem Overlay
 
 A native Rust overlay for ARAM Mayhem on Windows. It runs quietly in the
-notification area and, when an augment offer opens, reads the three card
-titles and displays each card's
+notification area and, when an augment offer opens, reads the card
+titles (three, or four when an effect adds a choice) and displays each card's
 **S–D tier**, **overall pick rate**, **pick-rate rank within its rarity**, and
 the change since the previous published patch in percentage points (pp).
 The rounded badges sit inside the lower part of each card. They are

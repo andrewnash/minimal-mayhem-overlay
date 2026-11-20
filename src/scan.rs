@@ -16,11 +16,17 @@ pub fn english_ocr() -> Result<OcrEngine> {
     OcrEngine::TryCreateFromLanguage(&english)
 }
 
-/// Measured on a live 3840x1440 offer (HUD GlobalScale 0.25): cards sit 490 px apart,
-/// 424 px wide, spanning about 18%-66% of the window height.
-pub fn card_centers(width: i32, height: i32) -> [i32; 3] {
-    let spacing = (height * 34 / 100).min(width / 3);
-    [width / 2 - spacing, width / 2, width / 2 + spacing]
+/// Offers show three cards, or four with an extra-choice effect.
+pub const CARD_COUNTS: [usize; 2] = [3, 4];
+
+/// Measured on live 3840x1440 offers (HUD GlobalScale 0.25): cards sit 490 px apart,
+/// 424 px wide, spanning about 18%-66% of the window height, centred as a row whether there
+/// are three or four.
+pub fn card_centers(width: i32, height: i32, count: usize) -> Vec<i32> {
+    let spacing = (height * 34 / 100).min(width / 4);
+    (0..count)
+        .map(|index| width / 2 + (2 * index as i32 - (count as i32 - 1)) * spacing / 2)
+        .collect()
 }
 
 /// One card's title crop and what OCR read from it, kept so failed reads can be saved.
@@ -37,22 +43,24 @@ pub fn scan(
     engine: &OcrEngine,
     tiers: &Tiers,
     game: RECT,
-) -> Result<([Option<CardStats>; 3], [Sample; 3])> {
-    let mut cards = [None; 3];
-    let mut samples: [Sample; 3] = Default::default();
-    for index in 0..3 {
-        (cards[index], samples[index]) = read_card(engine, tiers, game, index)?;
-    }
-    Ok((cards, samples))
+    count: usize,
+) -> Result<(Vec<Option<CardStats>>, Vec<Sample>)> {
+    (0..count)
+        .map(|index| read_card(engine, tiers, game, count, index))
+        .collect::<Result<Vec<_>>>()
+        .map(|cards| cards.into_iter().unzip())
 }
 
-/// Cheap check for the augment offer: OCR only the middle card's title region.
-pub fn cards_open(engine: &OcrEngine, tiers: &Tiers, game: RECT) -> bool {
-    matches!(read_card(engine, tiers, game, 1), Ok((Some(_), _)))
+/// Cheap check for the augment offer: OCR one title per layout and return the card count of the
+/// layout that matched. A wrong layout's crop straddles two titles and reads nothing.
+pub fn cards_open(engine: &OcrEngine, tiers: &Tiers, game: RECT) -> Option<usize> {
+    CARD_COUNTS
+        .into_iter()
+        .find(|&count| matches!(read_card(engine, tiers, game, count, 1), Ok((Some(_), _))))
 }
 
 /// Text OCR returned for every card, for the log and for spotting a changed offer.
-pub fn describe(samples: &[Sample; 3]) -> String {
+pub fn describe(samples: &[Sample]) -> String {
     samples
         .iter()
         .enumerate()
@@ -69,7 +77,7 @@ pub fn describe(samples: &[Sample; 3]) -> String {
 }
 
 /// Writes each card's crop (BMP) and OCR text under `dir`, prefixed with `stamp`.
-pub fn save_samples(dir: &Path, stamp: &str, samples: &[Sample; 3]) -> std::io::Result<()> {
+pub fn save_samples(dir: &Path, stamp: &str, samples: &[Sample]) -> std::io::Result<()> {
     fs::create_dir_all(dir)?;
     for (index, sample) in samples.iter().enumerate() {
         let status = if sample.matched { "ok" } else { "miss" };
@@ -106,11 +114,12 @@ fn read_card(
     engine: &OcrEngine,
     tiers: &Tiers,
     game: RECT,
+    count: usize,
     index: usize,
 ) -> Result<(Option<CardStats>, Sample)> {
     let width = game.right - game.left;
     let height = game.bottom - game.top;
-    let centers = card_centers(width, height);
+    let centers = card_centers(width, height, count);
     // Stay inside one card so neighbouring titles never leak into the read.
     let crop_width = (height * 28 / 100).min((centers[1] - centers[0]) * 94 / 100);
     let crop_height = height * 19 / 100;
@@ -199,5 +208,17 @@ fn capture(x: i32, y: i32, width: i32, height: i32) -> Option<Vec<u8>> {
         }
         ReleaseDC(None, screen);
         (rows == height).then_some(pixels)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn matches_measured_card_centres() {
+        // Live 3840x1440 offers: three cards at 1430/1920/2410, four at 1184/1674/2164/2654.
+        assert_eq!(card_centers(3840, 1440, 3), [1431, 1920, 2409]);
+        assert_eq!(card_centers(3840, 1440, 4), [1187, 1676, 2164, 2653]);
     }
 }

@@ -62,7 +62,7 @@ const BADGE_CENTER_Y_PERCENT: i32 = 60;
 const COLOR_KEY: COLORREF = COLORREF(0x00ff00ff);
 
 thread_local! {
-    static BADGES: RefCell<[Badge; 3]> = RefCell::default();
+    static BADGES: RefCell<Vec<Badge>> = const { RefCell::new(Vec::new()) };
     static HEADER: RefCell<Option<Vec<u16>>> = const { RefCell::new(None) };
     static SHOW_BUILDS: Cell<bool> = const { Cell::new(true) };
     static BUILD_HWND: Cell<Option<HWND>> = const { Cell::new(None) };
@@ -165,6 +165,7 @@ fn run(check_ocr: bool) -> Result<()> {
         let mut scan_held = false;
         let mut auto_shown = false;
         let mut misses = 0u8;
+        let mut offer_cards = 3;
         let mut last_poll = Instant::now();
         let mut build_shown = false;
         let mut build_game = None;
@@ -237,7 +238,8 @@ fn run(check_ocr: bool) -> Result<()> {
                     let Ok(area) = game_area(game) else {
                         continue;
                     };
-                    if scan::cards_open(&engine, &tiers, area) {
+                    if let Some(count) = scan::cards_open(&engine, &tiers, area) {
+                        offer_cards = count;
                         misses = 0;
                         AUTO
                     } else {
@@ -300,7 +302,12 @@ fn run(check_ocr: bool) -> Result<()> {
                     if !auto {
                         println!("Scanning augment cards in the {width}x{height} game window.");
                     }
-                    match scan::scan(&engine, &tiers, area) {
+                    let count = if auto {
+                        offer_cards
+                    } else {
+                        scan::cards_open(&engine, &tiers, area).unwrap_or(3)
+                    };
+                    match scan::scan(&engine, &tiers, area, count) {
                         Ok((cards, samples)) if GetForegroundWindow() == game => {
                             let recognized = cards.iter().flatten().count();
                             let read = scan::describe(&samples);
@@ -317,12 +324,12 @@ fn run(check_ocr: bool) -> Result<()> {
                                 }
                                 if !auto_shown {
                                     println!(
-                                        "Augment offer detected: recognized {recognized}/3 titles."
+                                        "Augment offer detected: recognized {recognized}/{count} titles."
                                     );
                                 }
                                 auto_shown = true;
                             } else {
-                                println!("Recognized {recognized}/3 augment titles.");
+                                println!("Recognized {recognized}/{count} augment titles.");
                             }
                             let champion = champion.or_else(|| {
                                 (recognized > 0).then(|| live::champion(&data)).flatten()
@@ -332,7 +339,7 @@ fn run(check_ocr: bool) -> Result<()> {
                             }
                             let champion_picks = champion
                                 .and_then(|name| tiers::ChampionPicks::load(&data.patch, name));
-                            let centers = scan::card_centers(width, height);
+                            let centers = scan::card_centers(width, height, count);
                             let details = action == DETAILS;
                             HEADER.replace(if recognized == 0 {
                                 Some("No augment cards found".encode_utf16().collect())
@@ -346,50 +353,71 @@ fn run(check_ocr: bool) -> Result<()> {
                                     label.encode_utf16().collect()
                                 })
                             });
-                            BADGES.replace(std::array::from_fn(|i| Badge {
-                                center: centers[i],
-                                stats: cards[i],
-                                build_hint: cards[i].filter(|_| !details).and_then(|card| {
-                                    champion_picks
-                                        .as_ref()
-                                        .and_then(|picks| picks.weapon_items(&data, card))
-                                        .map(|items| {
-                                            let names: [&str; 2] = std::array::from_fn(|i| {
-                                                items.get(i).map_or("", String::as_str)
-                                            });
-                                            BuildLine::new(items.join(" / "), &names)
-                                        })
-                                        .or_else(|| {
-                                            data.is_weapon_of_destiny(card)
-                                                .then(|| {
-                                                    champion.and_then(|id| weapon_line(&data, id))
-                                                })
-                                                .flatten()
-                                        })
-                                }),
-                                champion_pick: champion_picks
-                                    .as_ref()
-                                    .zip(cards[i])
-                                    .and_then(|(picks, card)| picks.match_share(&data, card))
-                                    .map(|(share, count)| {
-                                        format!("CN {share:.2}% match share  ·  {count} picks")
-                                            .encode_utf16()
-                                            .collect()
-                                    }),
-                                hint: cards[i]
-                                    .and_then(|card| {
-                                        if details {
-                                            card.rank_change.map(|change| {
-                                                format!("Global rank move {change:+}")
+                            BADGES.replace(
+                                (0..count)
+                                    .map(|i| Badge {
+                                        center: centers[i],
+                                        stats: cards[i],
+                                        build_hint: cards[i].filter(|_| !details).and_then(
+                                            |card| {
+                                                champion_picks
+                                                    .as_ref()
+                                                    .and_then(|picks| {
+                                                        picks.weapon_items(&data, card)
+                                                    })
+                                                    .map(|items| {
+                                                        let names: [&str; 2] =
+                                                            std::array::from_fn(|i| {
+                                                                items
+                                                                    .get(i)
+                                                                    .map_or("", String::as_str)
+                                                            });
+                                                        BuildLine::new(items.join(" / "), &names)
+                                                    })
+                                                    .or_else(|| {
+                                                        data.is_weapon_of_destiny(card)
+                                                            .then(|| {
+                                                                champion.and_then(|id| {
+                                                                    weapon_line(&data, id)
+                                                                })
+                                                            })
+                                                            .flatten()
+                                                    })
+                                            },
+                                        ),
+                                        champion_pick: champion_picks
+                                            .as_ref()
+                                            .zip(cards[i])
+                                            .and_then(|(picks, card)| {
+                                                picks.match_share(&data, card)
                                             })
-                                        } else {
-                                            champion
-                                                .and_then(|name| data.combo_hint(name, card))
-                                                .map(|partner| format!("Combo with {partner}"))
-                                        }
+                                            .map(|(share, count)| {
+                                                format!(
+                                                    "CN {share:.2}% match share  ·  {count} picks"
+                                                )
+                                                .encode_utf16()
+                                                .collect()
+                                            }),
+                                        hint: cards[i]
+                                            .and_then(|card| {
+                                                if details {
+                                                    card.rank_change.map(|change| {
+                                                        format!("Global rank move {change:+}")
+                                                    })
+                                                } else {
+                                                    champion
+                                                        .and_then(|name| {
+                                                            data.combo_hint(name, card)
+                                                        })
+                                                        .map(|partner| {
+                                                            format!("Combo with {partner}")
+                                                        })
+                                                }
+                                            })
+                                            .map(|label| label.encode_utf16().collect()),
                                     })
-                                    .map(|label| label.encode_utf16().collect()),
-                            }));
+                                    .collect(),
+                            );
                             SetWindowPos(
                                 overlay,
                                 Some(HWND_TOPMOST),
@@ -492,7 +520,7 @@ fn foreground_game() -> Option<HWND> {
 
 /// Logs what OCR read and keeps the card crops under %LOCALAPPDATA%\MinimalMayhemOverlay\samples
 /// so misreads from real games can be inspected later.
-fn save_samples(samples: &[scan::Sample; 3], read: &str) {
+fn save_samples(samples: &[scan::Sample], read: &str) {
     let Some(dir) = tray::data_dir().map(|dir| dir.join("samples")) else {
         return;
     };
@@ -641,10 +669,16 @@ unsafe extern "system" fn window_proc(
             }
         } else {
             BADGES.with_borrow_mut(|badges| {
-                let half_width = ((badges[1].center - badges[0].center - 8) / 2).clamp(1, 161);
+                let (Some(first), Some(second), Some(last)) =
+                    (badges.first(), badges.get(1), badges.last())
+                else {
+                    return;
+                };
+                let half_width = ((second.center - first.center - 8) / 2).clamp(1, 161);
+                let middle = (first.center + last.center) / 2;
                 HEADER.with_borrow_mut(|header| {
                     if let Some(label) = header {
-                        draw_chip(dc, label, badges[1].center, half_width, 0);
+                        draw_chip(dc, label, middle, half_width, 0);
                     }
                 });
                 for badge in badges {
